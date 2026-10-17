@@ -973,7 +973,7 @@
       <div class="cart-form">
         ${field(T('cols', 'Colonnes'), `<input type="number" name="cols" min="1" max="12" value="${DOC.grid.cols}">`)}
         ${field(T('rows', 'Rangées'), `<input type="number" name="rows" min="1" max="12" value="${DOC.grid.rows}">`)}
-        ${field(T('page_name', 'Nom de la page affichée'), `<input type="text" name="page_name" maxlength="40" value="${esc(pg.name)}">`)}
+        ${field(T('page_name', 'Nom de la page affichée'), `<input type="text" name="page_name" maxlength="40" value="${esc(pg.name)}" placeholder="${esc(pgName)}">`)}
       </div>
       <p class="cart-note">${esc(T('pages_here', 'Pages ({n}) — la page en surbrillance est celle affichée ; touchez-en une pour l\'afficher :').replace('{n}', DOC.pages.length))}</p>
       <div class="cart-pages cart-pages-set" role="tablist">${DOC.pages.map((p2, i) => `<button type="button" role="tab" class="cart-btn cart-page${p2.id === DOC.page ? ' is-on' : ''}" data-spage="${esc(p2.id)}" aria-selected="${p2.id === DOC.page}">${esc(p2.name || T('page_n', 'Page {n}').replace('{n}', i + 1))}</button>`).join('')}</div>
