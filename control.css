@@ -152,3 +152,4 @@
 .cart-sec { margin-top: var(--space-3); padding: var(--space-2) var(--space-3) var(--space-3); border: 1px solid var(--border);
             border-radius: var(--radius-small); background: var(--bg-elev); }
 .cart-sec > .cart-h:first-child { margin-top: 0; }
+.cart-pages-set { margin-bottom: var(--space-2); }

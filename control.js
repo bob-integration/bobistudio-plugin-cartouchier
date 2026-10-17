@@ -929,6 +929,10 @@
       if (sec) sec.appendChild(el);
     });
   }
+  function refreshSettings() {
+    const b = $('.cart-settings');
+    if (b && !b.hidden) { b.hidden = true; openSettings(); }
+  }
   function openSettings() {
     const box = $('.cart-settings');
     if (!box.hidden) { box.hidden = true; return; }
@@ -971,10 +975,12 @@
         ${field(T('rows', 'Rangées'), `<input type="number" name="rows" min="1" max="12" value="${DOC.grid.rows}">`)}
         ${field(T('page_name', 'Nom de la page affichée'), `<input type="text" name="page_name" maxlength="40" value="${esc(pg.name)}">`)}
       </div>
+      <p class="cart-note">${esc(T('pages_here', 'Pages ({n}) — la page en surbrillance est celle affichée ; touchez-en une pour l\'afficher :').replace('{n}', DOC.pages.length))}</p>
+      <div class="cart-pages cart-pages-set" role="tablist">${DOC.pages.map((p2, i) => `<button type="button" role="tab" class="cart-btn cart-page${p2.id === DOC.page ? ' is-on' : ''}" data-spage="${esc(p2.id)}" aria-selected="${p2.id === DOC.page}">${esc(p2.name || T('page_n', 'Page {n}').replace('{n}', i + 1))}</button>`).join('')}</div>
       <div class="cart-form-acts">
         <button type="button" class="cart-btn cart-pg-add">${esc(T('page_add', 'Ajouter une page'))}</button>
-        <button type="button" class="cart-btn" data-pmove="-1" aria-label="${esc(T('move_left', 'Déplacer à gauche'))}">←</button>
-        <button type="button" class="cart-btn" data-pmove="1" aria-label="${esc(T('move_right', 'Déplacer à droite'))}">→</button>
+        <button type="button" class="cart-btn" data-pmove="-1">${esc(T('page_move_left', '← Déplacer la page'))}</button>
+        <button type="button" class="cart-btn" data-pmove="1">${esc(T('page_move_right', 'Déplacer la page →'))}</button>
         <button type="button" class="cart-btn cart-danger cart-pg-del">${esc(T('page_delete', 'Supprimer la page'))}</button>
         <span class="cart-spacer"></span>
         <button type="button" class="cart-btn cart-primary cart-grid-save">${esc(T('save_grid', 'Enregistrer la grille'))}</button>
@@ -1002,8 +1008,13 @@
       await post('/grid', {cols: +v('cols').value, rows: +v('rows').value});
       if (v('page_name').value !== pg.name) await post('/pages', {op: 'rename', page: pg.id, name: v('page_name').value});
     };
-    box.querySelector('.cart-pg-add').onclick = () => post('/pages', {op: 'add'});
-    box.querySelectorAll('[data-pmove]').forEach(b => { b.onclick = () => post('/pages', {op: 'move', page: DOC.page, delta: +b.dataset.pmove}); });
+    // les gestes de page se VOIENT ici (2026-10-17) : la barre d'onglets est en haut de la grille, loin du panneau — on
+    // ajoutait des pages sans rien voir bouger ; le panneau se redessine et l'onglet affiché est en surbrillance
+    const pageOp = async (body, msg) => { const d = await post('/pages', body); if (d) { refreshSettings(); if (msg) TOAST(msg(), 'info'); } };
+    box.querySelector('.cart-pg-add').onclick = () => pageOp({op: 'add'}, () =>
+      T('page_added', 'Page ajoutée et affichée ({n} pages)').replace('{n}', DOC.pages.length));
+    box.querySelectorAll('[data-pmove]').forEach(b => { b.onclick = () => pageOp({op: 'move', page: DOC.page, delta: +b.dataset.pmove}); });
+    box.querySelectorAll('[data-spage]').forEach(b => { b.onclick = async () => { if (await post('/page', {page: b.dataset.spage})) refreshSettings(); }; });
     box.querySelector('.cart-pg-del').onclick = () => {
       if (box.dataset.confirm !== DOC.page) {
         box.dataset.confirm = DOC.page;
@@ -1011,7 +1022,7 @@
         return;
       }
       delete box.dataset.confirm;
-      post('/pages', {op: 'delete', page: DOC.page});
+      pageOp({op: 'delete', page: DOC.page});
     };
     renderPlayersSetting(box.querySelector('.cart-players-set'), nPl);
   }
