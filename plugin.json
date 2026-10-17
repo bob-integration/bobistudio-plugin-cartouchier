@@ -6,7 +6,7 @@
   "image": "media",
   "media_volume": true,
   "state_volume": true,
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Cartouchier : touches sonores en grille à pages ou en playlist A/B, sur N lecteurs stéréo (un flux MXL audio chacun). Boucle, enchaînement, exclusivité, fondu d'arrêt, deuxième appui réglable, normalisation EBU R128 au chargement, décompte, forme d'onde, intro / fin. Publie l'état de chaque flux (GET /flows) pour la console.",
   "badge": {
     "label": "Cart",
@@ -156,6 +156,8 @@
       "/mode",
       "/playlist",
       "/settings",
+      "/defaults",
+      "/assign",
       "/media/rescan"
     ],
     "flow_status": {
@@ -182,6 +184,8 @@
         "/mode",
         "/playlist",
         "/settings",
+        "/defaults",
+        "/assign",
         "/page",
         "/pl/options"
       ]
@@ -222,6 +226,49 @@
             "max": 120,
             "step": 1,
             "default": 10
+          }
+        }
+      },
+      {
+        "label": "Défauts des touches",
+        "endpoint": "/defaults",
+        "path_prefix": "defaults",
+        "fields": {
+          "fade_out_ms": {
+            "label": "Fondu d'arrêt par défaut (ms)",
+            "type": "duration",
+            "min": 0,
+            "max": 30000,
+            "step": 100,
+            "default": 0
+          },
+          "second_press": {
+            "label": "Deuxième appui par défaut",
+            "type": "enum",
+            "options": [
+              "stop",
+              "pause",
+              "restart"
+            ],
+            "default": "stop"
+          },
+          "loop": {
+            "label": "Boucle par défaut",
+            "type": "bool",
+            "default": false
+          },
+          "group": {
+            "label": "Groupe d'exclusivité par défaut",
+            "type": "text",
+            "default": ""
+          },
+          "player": {
+            "label": "Lecteur affecté par défaut (0 = libre)",
+            "type": "number",
+            "min": 0,
+            "max": 8,
+            "step": 1,
+            "default": 0
           }
         }
       }

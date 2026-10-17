@@ -28,10 +28,29 @@ press** while playing (stop with the fade, pause/resume, or restart from the top
 **outro** markers (ms from the start), assigned player, colour. Pressing a key during its fade cuts
 it.
 
-Edit mode: tap a key (or an empty slot) to edit it; ← → move it. Media come from the **media
-base** (shared library; a media absent from this node is fetched first, verified copy) or from a
-**file sent from your computer**: the "Send a file…" button, or drop a desktop file on a key — the
-key is assigned when the upload ends.
+Edit mode: the **media manager** shows next to the grid (below it on a narrow screen). To assign a
+sound: **drag** it onto a key (mouse; with a finger, long-press the media then slide), or **tap
+the media** (it stays highlighted) **then the key**. It is immediate and saved; the title takes the
+media's name. On a used key only the sound changes, its settings stay; a banner offers **Undo** for
+a few seconds. A media absent from this node is assigned at once, then copied to the node (verified
+copy). Tapping a key with no media selected opens it in the editor; ← → move it. A **desktop file**
+can also be dropped on a key (or "Send a file…"): the key is assigned when ITS upload ends.
+
+### Key defaults
+
+Stop fade, second press, loop, exclusive group and assigned player are set **once for the whole
+cart** (Settings → Key defaults), and per **page** if needed. A key **inherits** from its page, else
+from the cart, except what it **customises**; the editor shows "Default (value)" or its own value,
+with "Back to default". Changing a default applies to every key inheriting it; the stop fade even
+to a sound already playing, the rest at the next launch. A playlist item inherits the cart's stop
+fade. A cart older than 0.1.2 is migrated: a value equal to the old default becomes inherited, a
+different one stays customised — nothing changes on air.
+
+### Number of players
+
+Settings → Players: each player is an MXL output. Changing their number **redeploys** the cart
+(what plays stops, the cables of removed players drop): confirmed in the page, deploy permission
+required.
 
 ## Playlist and A/B
 

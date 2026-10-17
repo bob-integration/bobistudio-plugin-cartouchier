@@ -1,7 +1,18 @@
 {
-  "version": "0.1.1",
+  "version": "0.1.2",
   "date": "2026-10-17",
   "changes": {
+    "Affecter un son plus vite, défauts des touches (0.1.2)": [
+      "★ En mode Édition, le gestionnaire de médias (composant commun MediaLibrary) s'affiche directement à côté de la grille ou de la playlist (en dessous sur un écran étroit) ; hors édition, il disparaît.",
+      "Affecter un son : le GLISSER du panneau sur une touche, ou sur un emplacement de la playlist (inséré à cette position) — à la souris (glisser HTML5 des lignes de la bibliothèque) ET au doigt (pointer events : appui long sur le média, puis glisser) ; ou TOUCHER le média (il reste en surbrillance) PUIS la touche. Affectation immédiate et enregistrée (`POST /assign`, persisté), sans « Affecter » ni « Enregistrer » ; le titre reprend le nom du média.",
+      "Touche occupée : seul le son (et le titre) change, la touche garde ses autres réglages. Chaque geste s'annule depuis un bandeau intégré à la page (« Annuler », quelques secondes). Un média de la base absent du nœud est affecté aussitôt puis copié sur le nœud (copie vérifiée), et le cartouchier le décode à l'arrivée.",
+      "Dépôt rapide d'un fichier : l'envoi est rattaché à SA touche (taille + date du fichier, lues dans la session d'envoi) au lieu du premier dépôt en attente — un import fait entre-temps depuis la bibliothèque n'atterrit plus sur la mauvaise touche.",
+      "★ Défauts des touches (Réglages) : fondu d'arrêt, deuxième appui, boucle, groupe d'exclusivité, lecteur affecté — plus l'enchaînement automatique de la playlist. Chaque touche HÉRITE, sauf pour ce qu'elle surcharge ; l'éditeur montre « défaut (valeur) » ou la valeur propre, avec « Revenir au défaut ». Défauts PAR PAGE en option (page → cartouchier). Un défaut changé s'applique aux héritiers, le fondu d'arrêt même à un son déjà lancé ; boucle, groupe, deuxième appui et lecteur restent figés au lancement. Un élément de playlist hérite du fondu d'arrêt du cartouchier.",
+      "Migration (document version 1 → 2) : une valeur égale à l'ancien défaut implicite redevient « héritée », une valeur différente reste une surcharge — rien ne change à l'écoute, et les nouveaux défauts agissent sur les touches existantes.",
+      "Macros : défauts des touches dans le param_tree (`/defaults`), lus dans `/state.defaults`.",
+      "Réglages : nombre de lecteurs (sorties MXL), section expliquée, confirmation dans la page, par le chemin d'écriture des réglages de l'orchestrateur (redéploie) ; réservé au droit de déployer, lecture seule sinon.",
+      "Correctif : un nouvel identifiant de touche, de page ou d'élément n'est plus jamais celui d'un élément existant (document importé dont les ids dépassaient le compteur)."
+    ],
     "Intégration dans la console (0.1.1)": [
       "Manifeste : `control.flow_status: {endpoint: \"/flows\", panel: true}` — le cartouchier DÉCLARE qu'il publie l'état de ses flux ; l'orchestrateur valide la déclaration au scan et lit l'endpoint pour la console (décompte sur la tranche), une fois par producteur.",
       "`GET /flows` publie aussi `alert_s` (seuil du décompte, réglage Niveaux) : la tranche de la console passe en couleur d'alerte au même seuil que le cartouchier.",

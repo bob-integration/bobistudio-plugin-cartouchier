@@ -30,11 +30,31 @@ part — sur le même lecteur, sans trou, sauf si elle a son propre lecteur), **
 début), marqueurs **intro** et **fin** (ms depuis le début), lecteur affecté, couleur. Appuyer
 pendant le fondu coupe le son.
 
-Mode Édition : toucher une touche (ou un emplacement vide) pour la modifier ; ← → la déplacent. Les
-médias viennent de la **base des médias** (bibliothèque commune ; un média absent de ce nœud est
-d'abord rapatrié, copie vérifiée) ou d'un **fichier envoyé depuis le poste** : bouton « Envoyer un
-fichier… », ou un fichier du bureau déposé sur une touche — la touche est affectée à la fin de
-l'envoi.
+Mode Édition : le **gestionnaire de médias** s'affiche à côté de la grille (en dessous sur un écran
+étroit). Pour affecter un son : le **glisser** sur une touche (à la souris ; au doigt, appui long
+sur le média puis glisser), ou **toucher le média** (il reste en surbrillance) **puis la touche**.
+C'est immédiat et enregistré ; le titre reprend le nom du média. Sur une touche occupée, seul le son
+change, les réglages restent ; un bandeau propose **Annuler** quelques secondes. Un média absent de
+ce nœud est affecté tout de suite puis copié sur le nœud (copie vérifiée). Toucher une touche sans
+média sélectionné l'ouvre dans l'éditeur ; ← → la déplacent. Un **fichier du poste** se dépose aussi
+sur une touche (ou bouton « Envoyer un fichier… ») : la touche est affectée à la fin de SON envoi.
+
+### Défauts des touches
+
+Fondu d'arrêt, deuxième appui, boucle, groupe d'exclusivité et lecteur affecté se règlent **une
+fois pour tout le cartouchier** (Réglages → Défauts des touches), et au besoin **par page**. Une
+touche **hérite** de sa page, sinon du cartouchier, sauf pour ce qu'elle **personnalise** ;
+l'éditeur affiche « Défaut (valeur) » ou la valeur propre, avec « Revenir au défaut ». Changer un
+défaut s'applique à toutes les touches qui en héritent ; le fondu d'arrêt même à un son déjà lancé,
+les autres réglages au lancement suivant. Un élément de playlist hérite du fondu d'arrêt du
+cartouchier. Un cartouchier d'avant 0.1.2 est migré : une valeur égale à l'ancien défaut redevient
+héritée, une valeur différente reste personnalisée — rien ne change à l'écoute.
+
+### Nombre de lecteurs
+
+Réglages → Lecteurs : chaque lecteur est une sortie MXL. Changer leur nombre **redéploie** le
+cartouchier (ce qui joue s'arrête, les câbles des lecteurs supprimés tombent) : confirmation dans la
+page, droit de déployer requis.
 
 ## Playlist et A/B
 

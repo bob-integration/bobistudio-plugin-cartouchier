@@ -150,6 +150,7 @@ def state_view():
         "n_players": N_PLAYERS, "flows": FLOWS, "mode": d["mode"], "doc_rev": rev,
         "page": d["page"], "page_index": pi + 1, "page_name": page["name"],
         "pages_count": len(ids), "grid": d["grid"], "settings": d["settings"],
+        "defaults": d["defaults"], "page_defaults": page.get("defaults") or {{}},
         "players": players,
         "playing_count": sum(1 for p in players if p["state"] in ("playing", "fading")),
         "current_title": cur["title"] if cur else "",
@@ -381,6 +382,12 @@ def _post(path, b):
         r = e.set_key(b)
         library.want(referenced_medias())
         return r
+    if path == "/assign":
+        r = e.assign_media(b)
+        library.want(referenced_medias())
+        return r
+    if path == "/defaults":
+        return e.set_defaults(b)
     if path == "/pages":
         return e.pages_op(b)
     if path == "/grid":

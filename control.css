@@ -109,3 +109,32 @@
 .cart-media-st { font-size: .78em; color: var(--status-warning-fg); }
 .cart-media-acts, .cart-form-acts { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-2); }
 .cart-lib { min-height: 320px; }
+
+/* ── edit mode: media panel docked beside the grid / playlist (below it on a narrow screen) ── */
+.cart-work { display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; }
+.cart-work.is-edit { display: grid; grid-template-columns: minmax(0, 3fr) minmax(300px, 2fr); align-items: start; }
+@media (max-width: 900px) { .cart-work.is-edit { grid-template-columns: minmax(0, 1fr); } }
+.cart-work.is-edit .cart-libwrap { position: sticky; top: env(safe-area-inset-top, 0px); max-height: 90vh; overflow: auto; }
+.cart-lib-hint { margin-bottom: var(--space-2); }
+.cart-armed, .cart-undo { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); padding: var(--space-1) var(--space-2);
+                          border: 1px solid var(--accent); border-radius: var(--radius-small); background: var(--accent-soft);
+                          color: var(--text-strong); margin-bottom: var(--space-2); }
+.cart-armed-txt, .cart-undo-txt { flex: 1; min-width: 12em; }
+.cart-lib [data-k] { -webkit-touch-callout: none; }
+.cart-lift { opacity: .5; }
+.cart-ghost { position: fixed; z-index: 10000; pointer-events: none; max-width: 260px; padding: var(--space-1) var(--space-2);
+              border: 1px solid var(--accent); border-radius: var(--radius-small); background: var(--bg-elev); color: var(--text-strong);
+              font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cart-is-armed .cart-key, .cart-is-armed .cart-pl-row[data-drop], .cart-is-armed .cart-pl-end { outline: 2px dashed var(--accent); outline-offset: -4px; }
+.cart-pl-row.is-drop { outline: 2px dashed var(--accent); outline-offset: -2px; }
+.cart-pl-end { min-height: 44px; width: 100%; border: 1px dashed var(--border-strong); border-radius: var(--radius);
+               background: transparent; color: var(--text-muted); font: inherit; cursor: pointer; touch-action: manipulation; }
+.cart-pl-end.is-drop { border-color: var(--accent); color: var(--text-strong); }
+
+/* ── inherited settings: "default (value)" or the key's own value ── */
+.cart-inh-own, .cart-inh-def { display: flex; align-items: center; gap: var(--space-2); min-height: 44px; }
+.cart-inh-own > input[type="number"], .cart-inh-own > input[type="text"], .cart-inh-own > select { flex: 1; min-width: 0; }
+.cart-inh-val { flex: 1; color: var(--text-muted); font-style: italic; }
+.cart-confirm { margin-top: var(--space-2); padding: var(--space-2) var(--space-3); border: 1px solid var(--status-warning-fg);
+                border-radius: var(--radius-small); background: var(--status-warning-bg); }
+.cart-confirm-txt { margin: 0; color: var(--text-strong); }

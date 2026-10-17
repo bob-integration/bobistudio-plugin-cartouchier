@@ -15,6 +15,11 @@ Vocabulary
   player   one stereo MXL flow. N of them, fixed at deploy time. State: idle | cued | playing |
            paused | fading.
   key      a grid button (media + behaviour). A playlist ITEM carries the same media fields.
+  defaults the behaviour a key INHERITS (doc 2, 0.1.2): stop fade, second press, loop, exclusive
+           group, assigned player. Three levels — the key's own value, else its page's default,
+           else the cart's default. In a key, `None` means "inherited"; any other value (an empty
+           group or player 0 included) is an explicit override. A playlist item inherits only its
+           stop fade, from the cart.
 
 Time is counted in SAMPLES at `sample_rate`; every value published to the outside is in ms.
 The render is called by ONE audio thread, the commands by the HTTP threads: one RLock covers
@@ -37,6 +42,14 @@ MAX_PAGES = 64
 MAX_ITEMS = 500
 MAX_FADE_MS = 30000
 GAIN_MIN_DB, GAIN_MAX_DB = -40.0, 20.0
+DOC_VERSION = 2
+
+# What a key inherits, and the cart defaults of a new cart. These are ALSO the implicit values every
+# key carried in doc version 1 — which is what the migration relies on (see normalize_item).
+# player: 0 = any free player, n = player n.
+DEFAULT_FIELDS = {"fade_out_ms": 0, "second_press": "stop", "loop": False, "group": "", "player": 0}
+KEY_INHERITED = tuple(DEFAULT_FIELDS)
+ITEM_INHERITED = ("fade_out_ms",)
 
 
 class EngineError(Exception):
@@ -68,7 +81,7 @@ class ArraySource:
 # ─── Document ────────────────────────────────────────────────────────────────────────────────
 def default_doc():
     return {
-        "version": 1,
+        "version": DOC_VERSION,
         "mode": "grid",
         "grid": {"cols": 4, "rows": 3},
         "page": "p1",
@@ -76,6 +89,7 @@ def default_doc():
         "playlist": {"items": [], "ab": True, "ab_players": [1, 2], "auto": False, "loop": False},
         "settings": {"target_lufs": -23.0, "normalize": True, "max_gain_db": 12.0,
                      "peak_ceiling_db": -1.0, "alert_s": 10},
+        "defaults": dict(DEFAULT_FIELDS),
         "seq": 1,
     }
 
@@ -109,32 +123,102 @@ def _media_set(m):
     return bool(m.get("asset") or m.get("file"))
 
 
-def normalize_item(k, n_players, is_key=True):
-    """A key (grid) or a playlist item. Unknown fields are dropped; every value is bounded."""
+def norm_field(name, v, n_players):
+    """One inheritable value, bounded. None in = None out (inherited); an unreadable value is
+    None too: it falls back on the default instead of becoming a surprising override."""
+    if v is None:
+        return None
+    if name == "fade_out_ms":
+        return _num(v, 0, MAX_FADE_MS, None, int)
+    if name == "second_press":
+        return v if v in SECOND_PRESS else None
+    if name == "loop":
+        return bool(v)
+    if name == "group":
+        return _text(v, 32)
+    if name == "player":
+        if v in ("", 0, "0", False):
+            return 0
+        return _num(v, 1, n_players, None, int)
+    return None
+
+
+def normalize_defaults(src, n_players, partial=False):
+    """Cart defaults (`partial=False`: every field, missing ones at DEFAULT_FIELDS) or page
+    defaults (`partial=True`: only the fields the page overrides)."""
+    src = src if isinstance(src, dict) else {}
+    out = {}
+    for f, dflt in DEFAULT_FIELDS.items():
+        v = norm_field(f, src.get(f), n_players)
+        if v is None and not partial:
+            v = dflt
+        if v is not None:
+            out[f] = v
+    return out
+
+
+def resolve(item, page_defaults, cart_defaults, fields=KEY_INHERITED):
+    """Effective value of each inherited field: the item's own, else the page's, else the cart's."""
+    out = {}
+    for f in fields:
+        v = item.get(f)
+        if v is None:
+            v = (page_defaults or {}).get(f)
+        if v is None:
+            v = (cart_defaults or {}).get(f)
+        if v is None:
+            v = DEFAULT_FIELDS[f]
+        out[f] = v
+    return out
+
+
+def normalize_item(k, n_players, is_key=True, legacy=False):
+    """A key (grid) or a playlist item. Unknown fields are dropped; every value is bounded.
+
+    Inherited fields stay None. `legacy` (a doc older than version 2, where every key carried
+    every value): a value EQUAL to the old implicit default becomes inherited again — there is no
+    way to tell an operator's choice of "0 ms" from the default it was given, and keeping them all
+    as overrides would make the new defaults act on nothing. A different value stays an override."""
     k = k if isinstance(k, dict) else {}
     out = {
         "id": _text(k.get("id"), 32),
         "title": _text(k.get("title"), 80),
         "media": normalize_media(k.get("media")),
         "gain_db": round(_num(k.get("gain_db", 0.0), GAIN_MIN_DB, GAIN_MAX_DB, 0.0), 2),
-        "loop": bool(k.get("loop", False)),
-        "fade_out_ms": _num(k.get("fade_out_ms", 0), 0, MAX_FADE_MS, 0, int),
         "intro_ms": _num(k.get("intro_ms", 0), 0, 24 * 3600 * 1000, 0, int),
         "outro_ms": _num(k.get("outro_ms", 0), 0, 24 * 3600 * 1000, 0, int),
         "color": k.get("color") if k.get("color") in COLORS else "",
     }
-    if is_key:
-        sp = k.get("second_press")
+    fields = KEY_INHERITED if is_key else ITEM_INHERITED
+    for f in fields:
+        raw = k.get(f)
+        if legacy and f == "player" and raw in (None, "", 0, "0"):
+            raw = None                    # version 1: no player = any free player = the default
+        v = norm_field(f, raw, n_players)
+        if legacy and v == DEFAULT_FIELDS[f]:
+            v = None
+        out[f] = v
+    if not is_key:
+        out["loop"] = bool(k.get("loop", False))
+    else:
         out.update({
             "slot": _num(k.get("slot", 0), 0, MAX_COLS * MAX_ROWS - 1, 0, int),
-            "group": _text(k.get("group"), 32),
             "next": _text(k.get("next"), 32),
-            "second_press": sp if sp in SECOND_PRESS else "stop",
         })
-        p = k.get("player")
-        out["player"] = (_num(p, 1, n_players, None, int)
-                         if p not in (None, "", 0, "0") else None)
     return out
+
+
+def _next_id(d, prefix):
+    """A new key / page / item id, never one already in the document. `seq` alone is not enough: a
+    document written elsewhere (imported, hand-edited) may hold ids above it, and a reused id made
+    the NEW element take the old one's place (the old one was renamed by normalize_doc)."""
+    used = {p["id"] for p in d["pages"]} | {k["id"] for p in d["pages"] for k in p["keys"]} \
+        | {it["id"] for it in d["playlist"]["items"]}
+    while True:
+        d["seq"] += 1
+        c = "%s%d" % (prefix, d["seq"])
+        if c not in used:
+            return c
 
 
 def normalize_doc(doc, n_players):
@@ -142,6 +226,9 @@ def normalize_doc(doc, n_players):
     damaged persisted doc degrades instead of preventing the container from starting."""
     d = default_doc()
     src = doc if isinstance(doc, dict) else {}
+    # A document without a version, or of version 1, predates the defaults: migrated (see
+    # normalize_item). An unreadable version is treated as the oldest, never a crash.
+    legacy = _num(src.get("version", 1), 1, 10 ** 6, 1, int) < 2
     d["mode"] = src.get("mode") if src.get("mode") in MODES else "grid"
     g = src.get("grid") if isinstance(src.get("grid"), dict) else {}
     d["grid"] = {"cols": _num(g.get("cols", 4), 1, MAX_COLS, 4, int),
@@ -167,7 +254,7 @@ def normalize_doc(doc, n_players):
             continue
         keys, slots = [], set()
         for k in p.get("keys") or []:
-            nk = normalize_item(k, n_players, True)
+            nk = normalize_item(k, n_players, True, legacy)
             if nk["slot"] in slots:
                 continue                      # two keys on one slot: the first wins
             slots.add(nk["slot"])
@@ -175,9 +262,10 @@ def normalize_doc(doc, n_players):
             keys.append(nk)
         keys.sort(key=lambda x: x["slot"])
         pages.append({"id": _uid("p", _text(p.get("id"), 32)), "name": _text(p.get("name"), 40),
-                      "keys": keys})
+                      "keys": keys,
+                      "defaults": normalize_defaults(p.get("defaults"), n_players, partial=True)})
     if not pages:
-        pages = [{"id": _uid("p", "p1"), "name": "", "keys": []}]
+        pages = [{"id": _uid("p", "p1"), "name": "", "keys": [], "defaults": {}}]
     d["pages"] = pages
     ids = {p["id"] for p in pages}
     d["page"] = src.get("page") if src.get("page") in ids else pages[0]["id"]
@@ -185,7 +273,7 @@ def normalize_doc(doc, n_players):
     pl = src.get("playlist") if isinstance(src.get("playlist"), dict) else {}
     items = []
     for it in (pl.get("items") or [])[:MAX_ITEMS]:
-        ni = normalize_item(it, n_players, False)
+        ni = normalize_item(it, n_players, False, legacy)
         ni["id"] = _uid("i", ni["id"])
         items.append(ni)
     abp = pl.get("ab_players") if isinstance(pl.get("ab_players"), list) else [1, 2]
@@ -203,6 +291,7 @@ def normalize_doc(doc, n_players):
         "peak_ceiling_db": round(_num(s.get("peak_ceiling_db", -1.0), -20.0, 0.0, -1.0), 1),
         "alert_s": _num(s.get("alert_s", 10), 0, 120, 10, int),
     }
+    d["defaults"] = normalize_defaults(src.get("defaults"), n_players)
     # References that point nowhere are cleared, not kept dangling.
     key_ids = {k["id"] for p in pages for k in p["keys"]}
     for p in pages:
@@ -247,6 +336,8 @@ class CartEngine:
         self.source_for = source_for or (lambda media: None)
         self.norm_db_for = norm_db_for or (lambda media: 0.0)
         self.doc = normalize_doc(doc, self.n_players)
+        self._key_page = {}
+        self._index()
         self.pl_on_air = None       # playlist item id currently on air
         self.pl_ready = None        # playlist item id that the next GO plays
         self.events = []            # last events, for /state (bounded)
@@ -263,6 +354,22 @@ class CartEngine:
     def _event(self, kind, **kw):
         self.events.append(dict(kind=kind, **kw))
         del self.events[:-20]
+
+    def _index(self):
+        self._key_page = {k["id"]: p["id"] for p in self.doc["pages"] for k in p["keys"]}
+
+    def effective(self, item, origin="grid"):
+        """Resolved inherited values of a key (or a player's copy of it: `_page` is set at load)
+        or of a playlist item. Read from the CURRENT doc: a default changed now applies now."""
+        d = self.doc
+        if origin != "grid":
+            return resolve(item, None, d["defaults"], ITEM_INHERITED)
+        pid = item.get("_page") or self._key_page.get(item.get("id"))
+        pg = next((p for p in d["pages"] if p["id"] == pid), None)
+        return resolve(item, pg.get("defaults") if pg else None, d["defaults"])
+
+    def _fade_for(self, item, origin="grid"):
+        return self.effective(item or {}, origin)["fade_out_ms"]
 
     def find_key(self, key_id):
         for p in self.doc["pages"]:
@@ -309,7 +416,17 @@ class CartEngine:
         if src is None or not getattr(src, "frames", 0):
             raise EngineError("media_not_ready", 409, key=item["id"])
         self._cut(p)
-        p.item = copy.deepcopy(item)
+        it = copy.deepcopy(item)
+        if origin == "grid":
+            # What the sound DOES is fixed at launch (loop, group, second press, player): an edit
+            # never moves a playing sound. The stop fade is left as the key's own value (None =
+            # inherited) and resolved when the stop comes — a default changed during playback
+            # applies to the fade, which is harmless.
+            eff = self.effective(item, "grid")
+            it["_page"] = self._key_page.get(item.get("id"))
+            for f in ("loop", "group", "second_press", "player"):
+                it[f] = eff[f]
+        p.item = it
         p.origin = origin
         p.source = src
         p.pos = 0
@@ -410,7 +527,7 @@ class CartEngine:
             self._cut(p)
             self._release_after_cut(p)
             return {"player": p.n, "action": "cut"}
-        sp = k.get("second_press", "stop")
+        sp = self.effective(k)["second_press"]
         if sp == "pause":
             self._pause_now(p)
             return {"player": p.n, "action": "pause"}
@@ -421,21 +538,22 @@ class CartEngine:
             p.gain_db, p.gain = self._gain_for(item)
             self._start(p, 0)
             return {"player": p.n, "action": "restart"}
-        self._fade_out(p, k.get("fade_out_ms", 0))
+        self._fade_out(p, self._fade_for(k))
         return {"player": p.n, "action": "stop"}
 
     def _exclusive(self, k):
-        g = k.get("group")
+        g = self.effective(k)["group"]
         if not g:
             return
         for p in self.players:
             if (p.busy() and p.origin == "grid" and p.item and p.item.get("group") == g
                     and p.item["id"] != k["id"] and p.state != "fading"):
-                self._fade_out(p, p.item.get("fade_out_ms", 0))
+                self._fade_out(p, self._fade_for(p.item, p.origin))
 
     def _alloc(self, k):
-        if k.get("player"):
-            return self.players[k["player"] - 1]
+        pl = self.effective(k)["player"]
+        if pl and 1 <= pl <= self.n_players:
+            return self.players[pl - 1]
         for p in self.players:
             if not p.busy() and p.pending_cue is None:
                 return p
@@ -465,7 +583,7 @@ class CartEngine:
                 self._cut(p)
                 self._release_after_cut(p)
             else:
-                self._fade_out(p, p.item.get("fade_out_ms", 0))
+                self._fade_out(p, self._fade_for(p.item, p.origin))
             return {"stopped": True, "player": p.n}
 
     def stop_all(self, cut=False):
@@ -478,7 +596,7 @@ class CartEngine:
                         self._cut(p)
                         self._release_after_cut(p)
                     elif p.state == "playing":
-                        self._fade_out(p, (p.item or {}).get("fade_out_ms", 0))
+                        self._fade_out(p, self._fade_for(p.item, p.origin))
             return {"stopped": n}
 
     # ── players (direct) ──
@@ -514,7 +632,7 @@ class CartEngine:
                 if not was_cued:
                     self._release_after_cut(p)
             else:
-                self._fade_out(p, (p.item or {}).get("fade_out_ms", 0))
+                self._fade_out(p, self._fade_for(p.item, p.origin))
             return {"player": p.n, "action": "stop"}
 
     # ── playlist ──
@@ -622,7 +740,7 @@ class CartEngine:
                 self._load(target, items[self._item_index(self.pl_ready)], "playlist", "cued")
             for p in on_air_players:
                 if p is not target:
-                    self._fade_out(p, (p.item or {}).get("fade_out_ms", 0))
+                    self._fade_out(p, self._fade_for(p.item, p.origin))
             self._start(target, 0)
             self.pl_on_air = target.item["id"]
             self.pl_ready = self._following(self.pl_on_air)
@@ -756,7 +874,8 @@ class CartEngine:
             if nxt is not None:
                 # Chained on the SAME player when the next key has none of its own: gapless (the
                 # render loop goes on filling the very same block from the next sound).
-                on = None if nxt.get("player") and nxt["player"] != p.n else p
+                npl = self.effective(nxt)["player"]
+                on = None if npl and npl != p.n else p
                 if on is p:
                     p.reset()
                 else:
@@ -839,6 +958,7 @@ class CartEngine:
     # ── document edits (all return the canonical doc) ──
     def _commit(self, d):
         self.doc = normalize_doc(d, self.n_players)
+        self._index()
         self.rev += 1
         self._reset_ready()
         self.recue()
@@ -892,8 +1012,7 @@ class CartEngine:
             if old_page is not None:
                 old_page["keys"] = [x for x in old_page["keys"] if x["id"] != old["id"]]
             if not merged.get("id"):
-                d["seq"] += 1
-                merged["id"] = "k%d" % d["seq"]
+                merged["id"] = _next_id(d, "k")
             merged["slot"] = slot
             pg["keys"].append(merged)
             doc = self._commit(d)
@@ -906,8 +1025,7 @@ class CartEngine:
             if op == "add":
                 if len(d["pages"]) >= MAX_PAGES:
                     raise EngineError("too_many_pages", 409)
-                d["seq"] += 1
-                pid = "p%d" % d["seq"]
+                pid = _next_id(d, "p")
                 d["pages"].append({"id": pid, "name": _text(body.get("name"), 40), "keys": []})
                 d["page"] = pid
             elif op == "rename":
@@ -975,6 +1093,56 @@ class CartEngine:
                     p.gain_db, p.gain = self._gain_for(p.item)
             return copy.deepcopy(doc)
 
+    def set_defaults(self, body):
+        """Cart defaults ({field: value}; null = back to the factory default) or, with `page`,
+        that page's defaults ({field: value}; null = back to inheriting from the cart). Every key
+        that inherits follows at once; a stop fade in progress keeps the slope it started with."""
+        with self.lock:
+            body = body or {}
+            d = copy.deepcopy(self.doc)
+            vals = {f: body[f] for f in DEFAULT_FIELDS if f in body}
+            pid = body.get("page")
+            if pid:
+                pg = self._page(d, pid)
+                cur = dict(pg.get("defaults") or {})
+                for f, v in vals.items():
+                    if v is None:
+                        cur.pop(f, None)
+                    else:
+                        cur[f] = v
+                pg["defaults"] = cur
+            else:
+                for f, v in vals.items():
+                    d["defaults"][f] = DEFAULT_FIELDS[f] if v is None else v
+            return copy.deepcopy(self._commit(d))
+
+    def assign_media(self, body):
+        """Put a media on the key at {page, slot} — the console's drag / tap gesture. An empty slot
+        gets a NEW key (every behaviour inherited); an occupied one keeps everything but its media
+        and title. Returns the doc with `key_id` and `previous` (the key as it was, None for a new
+        one): what the console needs to undo the gesture."""
+        with self.lock:
+            media = normalize_media(body.get("media"))
+            if not _media_set(media):
+                raise EngineError("no_media", 400)
+            slot = _num(body.get("slot"), 0, MAX_COLS * MAX_ROWS - 1, None, int)
+            if slot is None:
+                raise EngineError("bad_slot", 400)
+            d = copy.deepcopy(self.doc)
+            pg = self._page(d, body.get("page") or d["page"])
+            title = _text(body.get("title"), 80)
+            cur = next((k for k in pg["keys"] if k["slot"] == slot), None)
+            previous = copy.deepcopy(cur)
+            if cur is not None:
+                cur["media"] = media
+                if title:
+                    cur["title"] = title
+            else:
+                cur = {"id": _next_id(d, "k"), "slot": slot, "media": media, "title": title}
+                pg["keys"].append(cur)
+            doc = self._commit(d)
+            return dict(copy.deepcopy(doc), key_id=cur["id"], previous=previous)
+
     def pl_options(self, body):
         with self.lock:
             d = copy.deepcopy(self.doc)
@@ -988,6 +1156,7 @@ class CartEngine:
             d = copy.deepcopy(self.doc)
             items = d["playlist"]["items"]
             op = body.get("op")
+            added = []
 
             def _idx(iid):
                 for i, it in enumerate(items):
@@ -1003,8 +1172,8 @@ class CartEngine:
                     if len(items) >= MAX_ITEMS:
                         raise EngineError("too_many_items", 409)
                     it = dict(it or {})
-                    d["seq"] += 1
-                    it["id"] = "i%d" % d["seq"]
+                    it["id"] = _next_id(d, "i")
+                    added.append(it["id"])
                     items.insert(at, it)
                     at += 1
             elif op == "update":
@@ -1021,4 +1190,5 @@ class CartEngine:
                 del items[:]
             else:
                 raise EngineError("bad_op", 400, op=op)
-            return copy.deepcopy(self._commit(d))
+            doc = copy.deepcopy(self._commit(d))
+            return dict(doc, added=added) if added else doc
