@@ -21,7 +21,12 @@
 .cart-seg { display: inline-flex; gap: 0; }
 .cart-seg .cart-btn { border-radius: 0; }
 .cart-seg .cart-btn:first-child { border-radius: var(--radius-small) 0 0 var(--radius-small); }
-.cart-seg .cart-btn:last-child { border-radius: 0 var(--radius-small) var(--radius-small) 0; border-left: 0; }
+.cart-seg .cart-btn:last-child { border-radius: 0 var(--radius-small) var(--radius-small) 0; }
+/* bordures qui se CHEVAUCHENT (pas de border-left: 0 : le bouton sélectionné perdait son liseré gauche) ; le bouton
+   sélectionné passe au-dessus pour que son liseré soit entier des deux côtés */
+.cart-seg .cart-btn + .cart-btn { margin-left: -1px; }
+.cart-seg .cart-btn { position: relative; }
+.cart-seg .cart-btn.is-on { z-index: 1; }
 .cart-pages { display: flex; flex-wrap: wrap; gap: var(--space-1); }
 .cart-edit-sw, .cart-sw { display: inline-flex; align-items: center; gap: var(--space-1); min-height: 44px; }
 
