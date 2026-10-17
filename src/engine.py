@@ -31,6 +31,11 @@ import threading
 
 import numpy as np
 
+try:
+    from . import montage as MT
+except ImportError:                       # imported flat (tests, or sys.path = the package dir)
+    import montage as MT
+
 STATES = ("idle", "cued", "playing", "paused", "fading")
 SECOND_PRESS = ("stop", "pause", "restart")
 MODES = ("grid", "playlist")
@@ -188,6 +193,7 @@ def normalize_item(k, n_players, is_key=True, legacy=False):
         "intro_ms": _num(k.get("intro_ms", 0), 0, 24 * 3600 * 1000, 0, int),
         "outro_ms": _num(k.get("outro_ms", 0), 0, 24 * 3600 * 1000, 0, int),
         "color": k.get("color") if k.get("color") in COLORS else "",
+        "edit": MT.normalize_edit(k.get("edit")),      # clip editor (0.1.3): None = the media whole
     }
     fields = KEY_INHERITED if is_key else ITEM_INHERITED
     for f in fields:
@@ -309,6 +315,7 @@ class Player:
         self.reset()
         self.tails = []             # playbacks being de-clicked out after a cut
         self.pending_cue = None     # playlist item id to cue as soon as this player is idle
+        self.preview = False        # the PRE-LISTEN player (0.1.3): off air, no flow, no chaining
 
     def reset(self):
         self.state = "idle"
@@ -321,6 +328,7 @@ class Player:
         self.env = 1.0              # fade envelope (amplitude, before the square law)
         self.env_step = 0.0         # per sample; < 0 = fading out
         self.after_fade = None      # "stop" | "pause" when the envelope reaches 0
+        self.stop_at = None         # pre-listen only: frame where the playback ends (a selection)
 
     def busy(self):
         return self.state != "idle"
@@ -344,6 +352,10 @@ class CartEngine:
         self.counters = {"fired": 0, "refused": 0, "chained": 0, "looped": 0}
         self.rev = 0                # bumped at every document change: consoles refetch /doc on it
         self._declick = max(1, int(self.sr * DECLICK_MS / 1000))
+        self.pfl = Player(0)        # pre-listen (0.1.3): rendered after the players, to no flow
+        self.pfl.preview = True
+        self.pfl_out = None
+        self.pfl_what = None        # {"key"|"item": id, "start_ms", "end_ms"} of the current pre-listen
         self._reset_ready()
         self.recue()
 
@@ -403,6 +415,9 @@ class CartEngine:
         return None
 
     def _gain_for(self, item):
+        if item.get("edit"):        # an edit list normalises each of its segments itself
+            g = float(item.get("gain_db") or 0.0)
+            return g, 10.0 ** (g / 20.0)
         g = float(self.norm_db_for(item["media"]) or 0.0) + float(item.get("gain_db") or 0.0)
         return g, 10.0 ** (g / 20.0)
 
@@ -410,11 +425,7 @@ class CartEngine:
     def _load(self, p, item, origin, state):
         """Put `item` on player `p` (whatever it held is cut, de-clicked). Raises if the media is
         not ready: a key whose sound is still being decoded must say so, not play silence."""
-        if not _media_set(item["media"]):
-            raise EngineError("no_media", 409, key=item["id"])
-        src = self.source_for(item["media"])
-        if src is None or not getattr(src, "frames", 0):
-            raise EngineError("media_not_ready", 409, key=item["id"])
+        src = self.source_of(item)
         self._cut(p)
         it = copy.deepcopy(item)
         if origin == "grid":
@@ -443,6 +454,9 @@ class CartEngine:
         p.reset()
 
     def _release(self, p, reason):
+        if p.preview:
+            p.reset()
+            return
         self._event("released", player=p.n, reason=reason,
                     key=(p.item or {}).get("id"))
         p.reset()
@@ -790,7 +804,9 @@ class CartEngine:
     def render(self, n):
         """n frames for every player: list of float32 (n, 2). Called by the audio thread only."""
         with self.lock:
-            return [self._render_player(p, n) for p in self.players]
+            out = [self._render_player(p, n) for p in self.players]
+            self.pfl_out = self._render_player(self.pfl, n) if self.pfl.busy() or self.pfl.tails else None
+            return out
 
     def _render_player(self, p, n):
         out = np.zeros((n, 2), dtype=np.float32)
@@ -799,7 +815,8 @@ class CartEngine:
         while filled < n and p.state in ("playing", "fading") and guard < 8:
             guard += 1
             src = p.source
-            avail = src.frames - p.pos
+            end = src.frames if p.stop_at is None else min(src.frames, p.stop_at)
+            avail = end - p.pos
             take = min(n - filled, avail)
             if take > 0:
                 env, used, done = self._envelope(p, take)
@@ -816,7 +833,7 @@ class CartEngine:
                     else:
                         self._release(p, "faded")
                     break
-            if p.state in ("playing", "fading") and p.pos >= src.frames:
+            if p.state in ("playing", "fading") and p.pos >= end:
                 self._on_end(p)
         if p.tails:
             self._render_tails(p, out)
@@ -862,6 +879,13 @@ class CartEngine:
 
     def _on_end(self, p):
         item = p.item or {}
+        if p.preview:               # pre-listen: plays its range once, chains nothing
+            if p.stop_at is not None and p.pos < p.source.frames:
+                p.stop_at = None    # end of a selection: faded out over the next 5 ms, never a click
+                self._fade_out(p, DECLICK_MS)
+            else:
+                p.reset()
+            return
         if item.get("loop"):
             p.pos = 0
             self.counters["looped"] += 1
@@ -895,6 +919,98 @@ class CartEngine:
                 self.pl_go()
             except EngineError:
                 pass
+
+    # ── clip edit + pre-listen (0.1.3) ──
+    def source_of(self, item, edit=False):
+        """What a player reads for `item`: its decoded media, or its EDIT LIST compiled into a
+        montage (montage.py) — same `frames` / `read`, so everything downstream counts the edited
+        duration. `edit` overrides the item's own list (the editor's unsaved draft; None = whole
+        media). Raises if a media is not ready: a key whose sound is still being decoded must say
+        so, not play silence."""
+        e = item.get("edit") if edit is False else MT.normalize_edit(edit)
+        if not _media_set(item.get("media") or {}) and not e:
+            raise EngineError("no_media", 409, key=item.get("id"))
+        if e:
+            try:
+                return MT.compile_edit(e, item.get("media"), self.source_for, self.norm_db_for, self.sr)
+            except MT.MontageError as ex:
+                raise EngineError(ex.code, 409, key=item.get("id"), **ex.params)
+        if not _media_set(item["media"]):
+            raise EngineError("no_media", 409, key=item.get("id"))
+        src = self.source_for(item["media"])
+        if src is None or not getattr(src, "frames", 0):
+            raise EngineError("media_not_ready", 409, key=item.get("id"))
+        return src
+
+    def find_target(self, body):
+        """{key} | {item} -> (item, origin). The editor and the pre-listen address one or the other."""
+        if body.get("key"):
+            k = self.find_key(body.get("key"))
+            if k is None:
+                raise EngineError("unknown_key", 404, key=body.get("key"))
+            return k, "grid"
+        if body.get("item"):
+            i = self._item_index(body.get("item"))
+            if i is None:
+                raise EngineError("unknown_item", 404, item=body.get("item"))
+            return self._items()[i], "playlist"
+        raise EngineError("no_target", 400)
+
+    def edited_ms(self, item):
+        """Duration of the item as it PLAYS (edit list applied), or None if a media is not ready."""
+        if not item.get("edit"):
+            return None
+        try:
+            return self._ms(self.source_of(item).frames)
+        except EngineError:
+            return None
+
+    def preview(self, body):
+        """PRE-LISTEN: play a key or an item (or the editor's draft: `edit`, `gain_db`) on the
+        off-air player, from `start_ms` to `end_ms` (0 / absent = to the end). Touches no player and
+        no flow: heard only by the browsers listening to `pfl`. A new pre-listen replaces the
+        current one (de-clicked)."""
+        with self.lock:
+            item, origin = self.find_target(body or {})
+            it = copy.deepcopy(item)
+            if "edit" in (body or {}):
+                it["edit"] = MT.normalize_edit(body.get("edit"))
+            if body.get("gain_db") is not None:
+                it["gain_db"] = _num(body.get("gain_db"), GAIN_MIN_DB, GAIN_MAX_DB, 0.0)
+            src = self.source_of(it)
+            p = self.pfl
+            self._cut(p)
+            a = _num(body.get("start_ms", 0), 0, 24 * 3600 * 1000, 0, int)
+            b = _num(body.get("end_ms", 0), 0, 24 * 3600 * 1000, 0, int)
+            start = min(src.frames, int(round(a * self.sr / 1000.0)))
+            stop = min(src.frames, int(round(b * self.sr / 1000.0))) if b else None
+            if stop is not None and stop <= start:
+                raise EngineError("bad_range", 400)
+            p.item, p.origin, p.source = it, origin, src
+            p.gain_db, p.gain = self._gain_for(it)
+            p.stop_at = stop
+            self._start(p, start)
+            self.pfl_what = {"key" if origin == "grid" else "item": item["id"],
+                             "start_ms": a, "end_ms": b, "draft": "edit" in (body or {})}
+            self.counters["previewed"] = self.counters.get("previewed", 0) + 1
+            return {"preview": True, "duration_ms": self._ms(src.frames)}
+
+    def preview_stop(self):
+        with self.lock:
+            was = self.pfl.busy()
+            self._cut(self.pfl)
+            self.pfl_what = None
+            return {"stopped": was}
+
+    def preview_view(self):
+        p = self.pfl
+        it = p.item or {}
+        return {"state": p.state, "title": it.get("title") or "",
+                "key": (self.pfl_what or {}).get("key") if p.busy() else None,
+                "item": (self.pfl_what or {}).get("item") if p.busy() else None,
+                "elapsed_ms": self._ms(p.pos) if p.busy() else 0,
+                "duration_ms": self._ms(p.source.frames) if p.busy() and p.source is not None else 0,
+                "end_ms": self._ms(p.stop_at) if p.busy() and p.stop_at else None}
 
     # ── views ──
     def player_view(self, p, flow=None):
@@ -1088,9 +1204,11 @@ class CartEngine:
             d["settings"].update({k: v for k, v in (body or {}).items() if k in d["settings"]})
             doc = self._commit(d)
             # a new target re-gains what is ALREADY playing: the operator hears the change
-            for p in self.players:
+            for p in self.players + [self.pfl]:
                 if p.busy() and p.item:
                     p.gain_db, p.gain = self._gain_for(p.item)
+                    if isinstance(p.source, MT.Montage):
+                        p.source.renorm(self.norm_db_for)
             return copy.deepcopy(doc)
 
     def set_defaults(self, body):
@@ -1135,6 +1253,7 @@ class CartEngine:
             previous = copy.deepcopy(cur)
             if cur is not None:
                 cur["media"] = media
+                cur["edit"] = None        # In / Out / cuts of the OLD sound mean nothing on the new one
                 if title:
                     cur["title"] = title
             else:

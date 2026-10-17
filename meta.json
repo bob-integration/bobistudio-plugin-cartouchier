@@ -1,7 +1,16 @@
 {
-  "version": "0.1.2",
+  "version": "0.1.3",
   "date": "2026-10-17",
   "changes": {
+    "Écoute et éditeur de clip (0.1.3)": [
+      "★ Écoute dans le navigateur (bouton 🎧 de la barre), même mécanisme que la console audio : flux déclaré `control.streams` GET /listen.pcm (L16 stéréo 48 kHz, relayé tel quel par l'orchestrateur), AudioWorklet. Une seule source à la fois : un LECTEUR au choix (ce qui part vers la console), ou la PRÉ-ÉCOUTE.",
+      "★ Pré-écoute hors antenne : un lecteur propre au cartouchier, rendu dans le fil audio existant, qui n'écrit sur AUCUN flux MXL. Depuis le 🎧 d'une touche en Édition, l'éditeur de touche, une ligne de playlist ou l'éditeur de clip ; elle s'arrête quand le dernier navigateur qui l'écoute s'en va. Macros : « Pré-écouter une touche », « Arrêter la pré-écoute » ; état `preview` dans /state. Pas d'écoute sur la page publique (le relais ne sert aucun flux).",
+      "★ Éditeur de clip (presque plein écran, au doigt) ouvert depuis une touche ou un élément de playlist : forme d'onde zoomable (pincer, boutons, molette) servie par fenêtres par le conteneur (niveau grossier mis en cache + échantillons pour les fenêtres étroites, GET /wave), vues Montage et Source.",
+      "Non destructif : In / Out, coupes (micro-fondu de 10 ms aux raccords), assemblage de plusieurs sons avec fondus enchaînés réglables (durée, forme), fondus d'entrée et de sortie (durée, forme : linéaire, puissance constante, en S, exponentielle), enveloppe de volume (points, glissés au doigt), gain ; la normalisation R128 s'applique par son. Le tout est la LISTE DE MONTAGE de la touche (`edit`), rendue par le moteur en lecture, sans fichier intermédiaire ; décompte, durée, intro / fin, /flows et forme d'onde comptent la durée montée.",
+      "Pré-écoute dans l'éditeur : le clip, la sélection, autour du curseur, de In, de Out ou d'un raccord de coupe (secondes avant / après réglables), sur le brouillon non enregistré. Annuler / rétablir, Enregistrer, Abandonner (confirmation dans la page).",
+      "« Enregistrer comme nouveau média » : le montage rendu en WAV 24 bits à côté du premier son, avec son identité dans le sidecar (`origin=\"cartouchier\"`, `derived_from`) ; l'original n'est jamais touché ; puis analyse du nœud demandée à la base des médias, et « Utiliser le nouveau média ici ».",
+      "Une touche dont on remplace le son (glisser, toucher-toucher) perd son montage : In / Out et coupes de l'ancien son ne veulent rien dire sur le nouveau."
+    ],
     "Affecter un son plus vite, défauts des touches (0.1.2)": [
       "★ En mode Édition, le gestionnaire de médias (composant commun MediaLibrary) s'affiche directement à côté de la grille ou de la playlist (en dessous sur un écran étroit) ; hors édition, il disparaît.",
       "Affecter un son : le GLISSER du panneau sur une touche, ou sur un emplacement de la playlist (inséré à cette position) — à la souris (glisser HTML5 des lignes de la bibliothèque) ET au doigt (pointer events : appui long sur le média, puis glisser) ; ou TOUCHER le média (il reste en surbrillance) PUIS la touche. Affectation immédiate et enregistrée (`POST /assign`, persisté), sans « Affecter » ni « Enregistrer » ; le titre reprend le nom du média.",

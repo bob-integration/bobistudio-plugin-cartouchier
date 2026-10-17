@@ -29,8 +29,10 @@ import numpy as np
 
 try:
     from . import loudness
+    from . import montage
 except ImportError:                       # imported flat (tests, or sys.path = the package dir)
     import loudness
+    import montage
 
 SR = 48000
 CH = 2
@@ -77,6 +79,7 @@ class Library:
         self.asset_map = {}
         self.asset_scan_t = 0.0
         self.stats = {"decoded": 0, "errors": 0, "decode_ms_last": 0, "evicted": 0}
+        self.peak_levels = {}   # cache key -> coarse waveform level (clip editor, montage.window)
 
     def _pick_cache_dir(self):
         for d in ("/var/lib/bobi/cart_cache", "/tmp/cart_cache"):
@@ -315,7 +318,7 @@ class Library:
             if k in keep_keys:
                 continue
             sz = e.stat().st_size
-            for ext in (".f32", ".json"):
+            for ext in (".f32", ".json", ".pk"):
                 try:
                     os.remove(os.path.join(self.cache, k + ext))
                 except OSError:
@@ -324,7 +327,109 @@ class Library:
                 self.sources.pop(k, None)
                 self.meta.pop(k, None)
                 self.status.pop(k, None)
+                self.peak_levels.pop(k, None)
             self.stats["evicted"] += 1
             total -= sz
             if total <= self.max_bytes:
                 break
+
+
+# ─── Clip editor (0.1.3): zoomable waveform, "save as new media" ─────────────────────────────
+def peaks(lib, media):
+    """Coarse level of the media's multi-resolution waveform (montage.PEAK_STEP samples per value),
+    computed once from the decoded cache and kept next to it (`<key>.pk`, float32), or None if the
+    media is not ready. Called from an HTTP thread (the editor), never the audio one."""
+    k = lib.cache_key(media)
+    with lib.lock:
+        lv = lib.peak_levels.get(k)
+        src = lib.sources.get(k)
+    if lv is not None or src is None:
+        return lv
+    pk = os.path.join(lib.cache, k + ".pk")
+    f32 = os.path.join(lib.cache, k + ".f32")
+    lv = None
+    try:
+        if os.path.getmtime(pk) >= os.path.getmtime(f32):
+            lv = np.fromfile(pk, dtype="<f4")
+            if lv.shape[0] != (src.frames + montage.PEAK_STEP - 1) // montage.PEAK_STEP:
+                lv = None
+    except OSError:
+        lv = None
+    if lv is None:
+        lv = montage.peaks_level(src.read, src.frames)
+        try:
+            lv.astype("<f4").tofile(pk + ".part")
+            os.replace(pk + ".part", pk)
+        except OSError:
+            pass
+    with lib.lock:
+        lib.peak_levels[k] = lv
+    return lv
+
+
+_SAFE_RE = re.compile(r"[^A-Za-z0-9_.-]+")
+_CODE_RE = re.compile(r"__(?:[0-9a-f]{8}|[0-9a-f]{6})(?:_[a-z0-9]{1,16})?$")
+
+
+def new_media_path(root, rel_dir, stem, aid):
+    """`<rel_dir>/<stem>__<code>.wav`, code = 6 hex digits of the identity (8 if taken, then a
+    `_2`… suffix): the naming rule of app/media_naming.py, which the recorder and the transcoder
+    apply with their own copy of these lines."""
+    stem = _CODE_RE.sub("", _SAFE_RE.sub("_", stem).strip("._")) or "montage"
+    hx = aid.replace("-", "").lower()
+    d = os.path.join(root, rel_dir) if rel_dir else root
+    for n in (6, 8):
+        p = os.path.join(d, "%s__%s.wav" % (stem[:80], hx[:n]))
+        if not os.path.exists(p):
+            return p
+    for i in range(2, 1000):
+        p = os.path.join(d, "%s_%d__%s.wav" % (stem[:80], i, hx[:8]))
+        if not os.path.exists(p):
+            return p
+    raise RuntimeError("no free name")
+
+
+def save_montage(lib, m, name, first_media, hostname, gain=1.0, sr=SR, progress=None):
+    """Render the montage `m` into a NEW media of the base, next to its first source when that
+    one is on the node's media volume (never on a network share: shares are not indexed), at the
+    root otherwise. The file carries its identity in its sidecar with `origin="cartouchier"` and
+    the filiation (`derived_from`): the media base imports it from there (same path as the
+    recorder's clips) and the cart can play it at once by identity. The original is never touched.
+    Returns {asset, file (relative to the media root), duration_ms, clipped}."""
+    import uuid
+    import datetime
+    from xml.sax.saxutils import escape, quoteattr
+    aid = str(uuid.uuid4())
+    src_path = lib.resolve(first_media) if first_media else ""
+    rel_dir = ""
+    if src_path.startswith(lib.root.rstrip("/") + "/"):
+        rel_dir = os.path.dirname(os.path.relpath(src_path, lib.root))
+    path = new_media_path(lib.root, rel_dir, name, aid)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + ".part"
+    try:
+        res = montage.write_wav(m, tmp, gain=gain, sr=sr, progress=progress)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
+    derived = (first_media or {}).get("asset") or ""
+    dur = res["frames"] / float(sr)
+    xml = ('<?xml version="1.0" encoding="UTF-8"?>\n'
+           '<media id="%s" origin="cartouchier"%s>\n'
+           '  <file>%s</file>\n  <container>%s</container>\n  <created_at>%s</created_at>\n'
+           '  <duration>%.3f</duration>\n  <status>closed</status>\n'
+           '  <title>%s</title>\n</media>\n'
+           % (aid, (" derived_from=%s" % quoteattr(derived)) if derived else "",
+              escape(os.path.basename(path)), escape(hostname),
+              datetime.datetime.now().isoformat(timespec="seconds"), dur, escape(name or "")))
+    with open(path + ".xml.part", "w", encoding="utf-8") as f:
+        f.write(xml)
+    os.replace(path + ".xml.part", path + ".xml")
+    with lib.lock:
+        lib.asset_map[aid] = path
+    return {"asset": aid, "file": os.path.relpath(path, lib.root), "duration_ms": int(res["frames"] * 1000 // sr),
+            "clipped": res["clipped"]}

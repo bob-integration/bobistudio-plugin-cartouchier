@@ -6,7 +6,7 @@
   "image": "media",
   "media_volume": true,
   "state_volume": true,
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Cartouchier : touches sonores en grille à pages ou en playlist A/B, sur N lecteurs stéréo (un flux MXL audio chacun). Boucle, enchaînement, exclusivité, fondu d'arrêt, deuxième appui réglable, normalisation EBU R128 au chargement, décompte, forme d'onde, intro / fin. Publie l'état de chaque flux (GET /flows) pour la console.",
   "badge": {
     "label": "Cart",
@@ -31,6 +31,14 @@
     {
       "src": "src/media.py",
       "dest": "cart/media.py"
+    },
+    {
+      "src": "src/montage.py",
+      "dest": "cart/montage.py"
+    },
+    {
+      "src": "src/listen.py",
+      "dest": "cart/listen.py"
     }
   ],
   "nav": {
@@ -158,7 +166,13 @@
       "/settings",
       "/defaults",
       "/assign",
-      "/media/rescan"
+      "/media/rescan",
+      "/wave",
+      "/montage/wave",
+      "/montage/render",
+      "/montage/job",
+      "/preview",
+      "/preview/stop"
     ],
     "flow_status": {
       "endpoint": "/flows",
@@ -172,7 +186,9 @@
       "/pages",
       "/players",
       "/items",
-      "/waveform"
+      "/waveform",
+      "/wave",
+      "/montage/job"
     ],
     "persist": {
       "param": "cart",
@@ -189,7 +205,15 @@
         "/page",
         "/pl/options"
       ]
-    }
+    },
+    "streams": [
+      {
+        "path": "/listen.pcm",
+        "method": "GET",
+        "perm": "read",
+        "content_type": "audio/L16;rate=48000;channels=2"
+      }
+    ]
   },
   "param_tree": {
     "global_groups": [
@@ -499,6 +523,25 @@
         "state": "mode",
         "value": "playlist"
       }
+    },
+    {
+      "id": "preview_key",
+      "label": "Pré-écouter une touche (hors antenne)",
+      "endpoint": "/preview",
+      "params": [
+        {
+          "key": "key",
+          "label": "Touche",
+          "type": "text",
+          "options_endpoint": "/keys"
+        }
+      ]
+    },
+    {
+      "id": "preview_stop",
+      "label": "Arrêter la pré-écoute",
+      "endpoint": "/preview/stop",
+      "params": []
     }
   ],
   "state": [
@@ -605,6 +648,20 @@
       "label": "Lecteur 2 : titre",
       "endpoint": "/state",
       "path": "players.1.title",
+      "type": "text"
+    },
+    {
+      "id": "preview_state",
+      "label": "Pré-écoute : état",
+      "endpoint": "/state",
+      "path": "preview.state",
+      "type": "text"
+    },
+    {
+      "id": "preview_title",
+      "label": "Pré-écoute : titre",
+      "endpoint": "/state",
+      "path": "preview.title",
       "type": "text"
     }
   ]

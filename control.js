@@ -155,6 +155,7 @@
           <span class="cart-spacer"></span>
           <label class="cart-edit-sw"${PUBLIC ? ' hidden' : ''}><input type="checkbox" class="ctl-switch cart-edit-in"> ${esc(T('edit', 'Édition'))}</label>
           <button type="button" class="cart-btn cart-settings-btn"${PUBLIC ? ' hidden' : ''}>${esc(T('settings', 'Réglages'))}</button>
+          <div class="cart-listen"${PUBLIC ? ' hidden' : ''}></div>
           <button type="button" class="cart-btn cart-stopall"${PUBLIC ? ' hidden' : ''}>${esc(T('stop_all', 'Tout arrêter'))}</button>
         </div>
         ${PUBLIC ? `<p class="cart-note">${esc(T('read_only', 'Lien public : lecture seule'))}</p>` : ''}
@@ -393,6 +394,7 @@
       html += `<button type="button" class="cart-key${p ? ' is-' + p.state : ''}${m.state && m.state !== 'ready' ? ' is-media-' + m.state : ''}"
           data-slot="${s}" data-drop="key:${s}" data-key="${esc(k.id)}" data-color="${esc(k.color || '')}"${p ? ` data-player="${p.player}"` : ''}>
           <span class="cart-key-title">${esc(k.title || mediaName(baseName(k.media.file)) || T('untitled', 'Sans titre'))}</span>
+          ${EDIT && !PUBLIC ? `<span class="cart-key-pfl" data-pfl="${esc(k.id)}" role="button" aria-label="${esc(T('pfl_key', 'Pré-écouter'))}">🎧</span>` : ''}
           <span class="cart-key-meta"><span>${esc(fmtDur(m.duration_ms))}</span><span>${flags}</span></span>
           ${p ? `<span class="cart-key-rem"></span><span class="cart-key-bar"></span>` : ''}
           ${m.state && m.state !== 'ready' ? `<span class="cart-key-media">${esc(T('media_' + m.state, m.state))}</span>` : ''}
@@ -403,8 +405,9 @@
     host.innerHTML = html;
     host.querySelectorAll('.cart-key').forEach(b => {
       const s = +b.dataset.slot;
-      b.onclick = () => {
+      b.onclick = ev => {
         if (EDIT && armed) { dropMedia({kind: 'key', page: pg.id, slot: s}, armed); return; }   // tap-tap
+        if (EDIT && pflTap(b, ev)) return;                                                          // 🎧 on the key: pre-listen
         if (EDIT) { openEditor(pg.id, s, bySlot[s] || null); return; }
         if (b.dataset.key) post('/fire', {key: b.dataset.key});
       };
@@ -651,6 +654,7 @@
 
   // Older path, kept: the key editor's « Media base… » → « Assign » (target chosen first).
   function assignMedia(t, media, title) {
+    if (t.clip) { t.clip(media, title); return; }        // clip editor: a segment appended
     if (t.item) {
       post('/playlist', {op: 'update', item: {id: t.item.id, media, title: t.item.title || title}});
       return;
@@ -750,6 +754,8 @@
           <div class="cart-media-acts">
             <button type="button" class="cart-btn cart-ed-lib">${esc(T('choose_media', 'Base des médias…'))}</button>
             <button type="button" class="cart-btn cart-ed-file">${esc(T('send_file', 'Envoyer un fichier…'))}</button>
+            ${key ? `<button type="button" class="cart-btn cart-ed-pfl">🎧 ${esc(T('pfl_key', 'Pré-écouter'))}</button>
+            <button type="button" class="cart-btn cart-ed-clip">✂ ${esc(T('clip_edit', 'Éditer le clip…'))}</button>` : ''}
             <input type="file" class="cart-ed-filein" accept="audio/*,video/*" hidden>
           </div>
           ${media.lufs != null ? `<small>${esc(T('measured', 'Mesuré {l} LUFS, crête {p} dBFS → normalisation {g} dB')
@@ -793,6 +799,8 @@
       if (d) { box.hidden = true; editing = null; }
     };
     box.querySelector('.cart-ed-lib').onclick = () => openLibrary({page: pageId, slot, key: val()}, T('choose_for_key', 'Choisir le son de la touche'));
+    if (key) { box.querySelector('.cart-ed-pfl').onclick = () => previewPlay({key: key.id});
+               box.querySelector('.cart-ed-clip').onclick = () => openClipEditor({key: key.id, page: pageId, slot}); }
     const fin = box.querySelector('.cart-ed-filein');
     box.querySelector('.cart-ed-file').onclick = () => { fin.value = ''; fin.click(); };
     fin.onchange = () => deposit(fin.files, {kind: 'key', page: pageId, slot});
@@ -851,6 +859,8 @@
             <button type="button" class="cart-btn" data-op="up" aria-label="${esc(T('move_up', 'Monter'))}">↑</button>
             <button type="button" class="cart-btn" data-op="down" aria-label="${esc(T('move_down', 'Descendre'))}">↓</button>
             <button type="button" class="cart-btn" data-op="edit" aria-label="${esc(T('edit_item', 'Modifier'))}">✎</button>
+            <button type="button" class="cart-btn" data-op="pfl" aria-label="${esc(T('pfl_key', 'Pré-écouter'))}">🎧</button>
+            <button type="button" class="cart-btn" data-op="clip" aria-label="${esc(T('clip_edit', 'Éditer le clip…'))}">✂</button>
             <button type="button" class="cart-btn cart-danger" data-op="remove" aria-label="${esc(T('delete', 'Supprimer'))}">✕</button></span>` : ''}
         </li>`; }).join('')}</ol>
       ${EDIT && !PUBLIC ? `<button type="button" class="cart-pl-end" data-drop="pl:${pl.items.length}">${esc(T('pl_drop_end', 'Déposer ici pour ajouter à la fin'))}</button>` : ''}`;
@@ -881,6 +891,8 @@
           const op = b.dataset.op;
           if (op === 'up' || op === 'down') post('/playlist', {op: 'move', id, delta: op === 'up' ? -1 : 1});
           else if (op === 'remove') post('/playlist', {op: 'remove', id});
+          else if (op === 'pfl') previewPlay({item: id});
+          else if (op === 'clip') openClipEditor({item: id});
           else openItemEditor(pl.items.find(x => x.id === id));
         };
       });
@@ -903,11 +915,15 @@
         <label class="cart-field cart-field-sw"><span>${esc(T('f_loop', 'Boucle'))}</span><input type="checkbox" class="ctl-switch" name="loop"${it.loop ? ' checked' : ''}></label>
       </div>
       <div class="cart-form-acts"><button type="button" class="cart-btn cart-ed-media">${esc(T('choose_media', 'Base des médias…'))}</button>
+        <button type="button" class="cart-btn" data-ed="pfl">🎧 ${esc(T('pfl_key', 'Pré-écouter'))}</button>
+        <button type="button" class="cart-btn" data-ed="clip">✂ ${esc(T('clip_edit', 'Éditer le clip…'))}</button>
         <span class="cart-spacer"></span>
         <button type="button" class="cart-btn cart-primary cart-ed-save">${esc(T('save', 'Enregistrer'))}</button></div>`;
     wireInh(box);
     box.querySelector('.cart-ed-close').onclick = () => { box.hidden = true; };
     box.querySelector('.cart-ed-media').onclick = () => openLibrary({item: it}, T('choose_for_item', 'Changer le son'));
+    box.querySelector('[data-ed="pfl"]').onclick = () => previewPlay({item: it.id});
+    box.querySelector('[data-ed="clip"]').onclick = () => openClipEditor({item: it.id});
     box.querySelector('.cart-ed-save').onclick = async () => {
       const o = {id: it.id};
       box.querySelectorAll('[name]').forEach(i => {
@@ -1084,6 +1100,736 @@
     };
   }
 
+  // ═══ MONITORING (0.1.3) ══════════════════════════════════════════════════════════════════════
+  // The audio console's listening, reused: the container serves GET /listen.pcm (declared in
+  // `control.streams`, relayed as is by the orchestrator's app/plugin_streams.py), int16 LE stereo
+  // 48 kHz from the live edge; here an AudioWorklet (ScriptProcessor when the page is not a secure
+  // context) plays it through a ~60 ms ring. ONE choice at a time: a player's output (what really
+  // goes to the console) or the PRE-LISTEN (`pfl`: the cart's off-air player, no MXL flow). Changing
+  // the choice closes the stream and opens the other one; unmounting closes it; the container stops
+  // the pre-listen when its last listener leaves. Not on the public page (the relay serves no stream).
+  class Ring {
+    constructor(frames) { this.buf = new Float32Array(frames * 2); this.cap = frames; this.r = 0; this.w = 0; this.n = 0;
+      this.target = 2880; this.maxF = 7200; this.primed = false; this.under = 0; this.dropped = 0; }
+    push(f) {
+      const nf = f.length >> 1;
+      for (let i = 0; i < nf; i++) {
+        if (this.n >= this.cap) { this.r = (this.r + 1) % this.cap; this.n--; }
+        this.buf[this.w * 2] = f[i * 2]; this.buf[this.w * 2 + 1] = f[i * 2 + 1];
+        this.w = (this.w + 1) % this.cap; this.n++;
+      }
+      if (this.n > this.maxF) { const d = this.n - this.target; this.r = (this.r + d) % this.cap; this.n -= d; this.dropped++; }
+    }
+    pull(L, R) {
+      const len = L.length;
+      if (!this.primed) { if (this.n >= this.target) this.primed = true; else { L.fill(0); R.fill(0); return; } }
+      for (let i = 0; i < len; i++) {
+        if (this.n <= 0) { this.primed = false; this.under++; for (; i < len; i++) { L[i] = 0; R[i] = 0; } return; }
+        L[i] = this.buf[this.r * 2]; R[i] = this.buf[this.r * 2 + 1];
+        this.r = (this.r + 1) % this.cap; this.n--;
+      }
+    }
+  }
+  const LISTEN_WORKLET = Ring.toString() + `
+    class CartLP extends AudioWorkletProcessor {
+      constructor() { super(); this.ring = new Ring(48000); this.port.onmessage = (e) => this.ring.push(e.data); }
+      process(i, o) { const out = o[0]; this.ring.pull(out[0], out[1] || out[0]); return true; }
+    }
+    registerProcessor("cart-listen", CartLP);`;
+  const LST = {on: false, src: 'pfl', abort: null, ctx: null, node: null, ring: null, err: '', gen: 0};
+  const lstLabel = src => src === 'pfl' ? T('lst_pfl', 'Pré-écoute') : T('player_n', 'Lecteur {n}').replace('{n}', src);
+
+  function listenMount() {
+    const host = $('.cart-listen');
+    if (!host || PUBLIC) return;
+    try { const v = localStorage.getItem('cart.listen.src.' + VMID); if (v) LST.src = v; } catch (e) { /* private window */ }
+    host.innerHTML = `
+      <button type="button" class="cart-btn cart-lst-btn" aria-pressed="false">🎧 ${esc(T('listen', 'Écoute'))}</button>
+      <select class="cart-lst-src" aria-label="${esc(T('listen_src', 'Source écoutée'))}"></select>
+      <button type="button" class="cart-btn cart-pfl-stop" hidden>■ ${esc(T('pfl_stop', 'Arrêter la pré-écoute'))}</button>
+      <span class="cart-lst-msg" role="status"></span>`;
+    host.querySelector('.cart-lst-btn').onclick = () => { if (LST.on) listenStop(); else listenStart(); };
+    host.querySelector('.cart-lst-src').onchange = e => listenSet(e.target.value, LST.on);
+    host.querySelector('.cart-pfl-stop').onclick = () => previewStop();
+    listenPaint();
+  }
+  function listenPaint() {
+    const host = $('.cart-listen');
+    if (!host || PUBLIC) return;
+    const sel = host.querySelector('.cart-lst-src');
+    const n = (S && S.n_players) || 0;
+    if (sel && sel.options.length !== n + 1) {
+      sel.innerHTML = ['pfl'].concat(Array.from({length: n}, (_, i) => String(i + 1)))
+        .map(v => `<option value="${v}">${esc(lstLabel(v))}</option>`).join('');
+    }
+    if (sel) sel.value = LST.src;
+    const b = host.querySelector('.cart-lst-btn');
+    b.classList.toggle('is-on', LST.on); b.setAttribute('aria-pressed', String(LST.on));
+    const pv = S && S.preview;
+    host.querySelector('.cart-pfl-stop').hidden = !(pv && pv.state !== 'idle');
+    host.querySelector('.cart-lst-msg').textContent = LST.err || (pv && pv.state !== 'idle'
+      ? T('pfl_playing', 'Pré-écoute : {t}').replace('{t}', pv.title || '') : '');
+  }
+  async function listenSet(src, restart) {
+    LST.src = String(src);
+    try { localStorage.setItem('cart.listen.src.' + VMID, LST.src); } catch (e) { /* private window */ }
+    if (restart || LST.on) { listenStop(); await listenStart(); }
+    listenPaint();
+  }
+  async function listenStart() {
+    if (LST.on || PUBLIC || !EL) return;
+    const gen = ++LST.gen;
+    LST.on = true; LST.err = ''; listenPaint();
+    LST.abort = new AbortController();
+    try {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      LST.ctx = new Ctx({sampleRate: 48000, latencyHint: 'interactive'});
+      if (window.isSecureContext && LST.ctx.audioWorklet) {
+        try {
+          const url = URL.createObjectURL(new Blob([LISTEN_WORKLET], {type: 'application/javascript'}));
+          await LST.ctx.audioWorklet.addModule(url);
+          LST.node = new AudioWorkletNode(LST.ctx, 'cart-listen', {outputChannelCount: [2]});
+        } catch (e) { LST.node = null; }
+      }
+      if (!LST.node) {
+        const ring = LST.ring = new Ring(48000);
+        LST.node = LST.ctx.createScriptProcessor(1024, 0, 2);
+        LST.node.onaudioprocess = e => ring.pull(e.outputBuffer.getChannelData(0), e.outputBuffer.getChannelData(1));
+      }
+      LST.node.connect(LST.ctx.destination);
+      if (LST.ctx.state === 'suspended') LST.ctx.resume().catch(() => {});
+      const resp = await fetch(api('/listen.pcm') + '?src=' + encodeURIComponent(LST.src), {signal: LST.abort.signal, cache: 'no-store'});
+      if (!resp.ok || !resp.body) {
+        const d = await resp.json().catch(() => ({}));
+        throw new Error(errText(d, resp.status));
+      }
+      const rd = resp.body.getReader();
+      let carry = new Uint8Array(0);
+      for (;;) {
+        const {value, done} = await rd.read();
+        if (done || gen !== LST.gen) break;
+        let u8 = value;
+        if (carry.length) { u8 = new Uint8Array(carry.length + value.length); u8.set(carry); u8.set(value, carry.length); }
+        const n = u8.length - (u8.length % 4);
+        carry = u8.slice(n);
+        const dv = new DataView(u8.buffer, u8.byteOffset, n);
+        const f = new Float32Array(n / 2);
+        for (let i = 0; i < f.length; i++) f[i] = dv.getInt16(i * 2, true) / 32768;
+        if (LST.ring) LST.ring.push(f); else LST.node.port.postMessage(f, [f.buffer]);
+      }
+      if (gen === LST.gen && LST.on) LST.err = T('lst_ended', 'Écoute interrompue');
+    } catch (e) {
+      if (!(e && e.name === 'AbortError') && gen === LST.gen) LST.err = String((e && e.message) || e);
+    }
+    if (gen === LST.gen) listenStop(true);
+  }
+  function listenStop(keepErr) {
+    LST.gen++;
+    LST.on = false;
+    if (LST.abort) { try { LST.abort.abort(); } catch (e) { /* done */ } LST.abort = null; }
+    try { if (LST.node) LST.node.disconnect(); } catch (e) { /* done */ }
+    try { if (LST.ctx) LST.ctx.close(); } catch (e) { /* done */ }
+    LST.node = null; LST.ctx = null; LST.ring = null;
+    if (!keepErr) LST.err = '';
+    listenPaint();
+  }
+  // Pre-listen a key / an item (or the clip editor's draft): the listening switches to `pfl` if it
+  // was elsewhere — one choice at a time — and starts if it was off (this tap is the user gesture
+  // the browser needs to open audio).
+  async function previewPlay(body) {
+    if (PUBLIC) return null;
+    if (!(LST.on && LST.src === 'pfl')) listenSet('pfl', true);
+    return post('/preview', body);
+  }
+  function previewStop() { return post('/preview/stop', {}); }
+  // 🎧 on a key in edit mode (a span inside the key's button: the tap must not open the editor).
+  function pflTap(btn, ev) {
+    const t = ev && ev.target && ev.target.closest ? ev.target.closest('[data-pfl]') : null;
+    if (!t || !btn.contains(t)) return false;
+    previewPlay({key: t.dataset.pfl});
+    return true;
+  }
+
+  // ═══ CLIP EDITOR (0.1.3) ═════════════════════════════════════════════════════════════════════
+  // Non-destructive: In / Out, cuts, assembly with crossfades, fades, volume envelope and gain are
+  // the EDIT LIST of the key or item (src/montage.py has the format and the gain laws); the file is
+  // never touched. The container renders the list at play time, serves the waveform windows (never
+  // computed here on a whole file) and renders "save as new media". Two views: MONTAGE (the edited
+  // timeline: fades, envelope, intro / end, crossfades) and SOURCE (the selected segment's file:
+  // In, Out, cuts). iPad first: 44 px buttons for every action, a tap places the cursor, one finger
+  // pans, two fingers pinch, an envelope point is dragged with the finger. Undo / redo is a local
+  // stack of drafts; nothing is written before « Save » (or « Save as new media »).
+  const SHAPES = ['lin', 'eq', 's', 'exp'];
+  const EDIT0 = () => ({segments: [{media: null, in_ms: 0, out_ms: 0, cuts: [], xfade_ms: 0, xfade_shape: 'eq'}],
+    fade_in_ms: 0, fade_in_shape: 'lin', fade_out_ms: 0, fade_out_shape: 'lin', envelope: []});
+  // Source time t of segment `seg` -> edited time, through the layout the container returns (pieces
+  // in ms). A point inside a removed passage maps to the joint that replaces it.
+  function srcToMix(layout, seg, t) {
+    const ps = (layout || []).filter(p => p.seg === seg);
+    if (!ps.length) return 0;
+    for (const p of ps) {
+      if (t < p.src_ms) return p.at_ms;
+      if (t <= p.src_ms + p.len_ms) return p.at_ms + (t - p.src_ms);
+    }
+    const l = ps[ps.length - 1];
+    return l.at_ms + l.len_ms;
+  }
+  // Edited time -> {seg, t} in source time (playhead in the source view), or null.
+  function mixToSrc(layout, t) {
+    const ps = layout || [];
+    for (let i = ps.length - 1; i >= 0; i--) {
+      const p = ps[i];
+      if (t >= p.at_ms && t < p.at_ms + p.len_ms) return {seg: p.seg, t: p.src_ms + (t - p.at_ms)};
+    }
+    return null;
+  }
+  // Envelope value (dB) at t: linear between points, flat outside (montage.py's law).
+  function envDbAt(env, t) {
+    if (!env || !env.length) return 0;
+    if (t <= env[0][0]) return env[0][1];
+    for (let i = 1; i < env.length; i++) {
+      if (t < env[i][0]) return env[i - 1][1] + (env[i][1] - env[i - 1][1]) * (t - env[i - 1][0]) / (env[i][0] - env[i - 1][0]);
+    }
+    return env[env.length - 1][1];
+  }
+  const fmtMs = ms => { ms = Math.max(0, Math.round(ms || 0)); const m = Math.floor(ms / 60000);
+    return m + ':' + String(Math.floor(ms / 1000) % 60).padStart(2, '0') + '.' + String(ms % 1000).padStart(3, '0'); };
+  const clone = o => JSON.parse(JSON.stringify(o));
+
+  let CE = null;
+  const tb = () => CE.t.key ? {key: CE.t.key} : {item: CE.t.item};
+  const findKeyDoc = id => { for (const p of DOC.pages) { const k = p.keys.find(x => x.id === id); if (k) return {k, p}; } return null; };
+  async function jget(p) {
+    const r = await fetch(api(p), {cache: 'no-store'});
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || d.ok === false) { const e = new Error(errText(d, r.status)); e.code = d.error; throw e; }
+    return d;
+  }
+  async function jpost(p, body) {
+    const r = await fetch(api(p), {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || d.ok === false) { const e = new Error(errText(d, r.status)); e.code = d.error; throw e; }
+    return d;
+  }
+
+  function openClipEditor(t) {
+    if (PUBLIC || !DOC) return;
+    const it = t.key ? (findKeyDoc(t.key) || {}).k : DOC.playlist.items.find(x => x.id === t.item);
+    if (!it) return;
+    clipClose(true);
+    const draft = {edit: it.edit ? clone(it.edit) : EDIT0(), gain_db: it.gain_db || 0,
+                   intro_ms: it.intro_ms || 0, outro_ms: it.outro_ms || 0};
+    CE = {t: t.key ? {key: t.key} : {item: t.item}, id: it.id, media: it.media,
+          title: it.title || mediaName(baseName(it.media.file)) || '', draft, saved: JSON.stringify(draft),
+          undo: [], redo: [], view: 'mix', seg: 0, cursor: 0, sel: null, win: null, dom: 0, wave: null, layout: [],
+          envSel: null, ptrs: new Map(), drag: null, pinch: null, confirm: null, job: null, err: '', seq: 0,
+          pre: 2, post: 2, fetchT: null, tick: null};
+    const ed = $('.cart-editor');
+    if (ed) { ed.hidden = true; editing = null; }
+    const box = document.createElement('div');
+    box.className = 'cart-clip';
+    box.setAttribute('role', 'dialog');
+    box.setAttribute('aria-modal', 'true');
+    $('.cart-root').appendChild(box);
+    CE.box = box;
+    CE.tick = setInterval(() => { if (CE && S && S.preview && S.preview.state !== 'idle') clipDraw(); }, 40);
+    clipRender();
+    clipFetch(true);
+  }
+  function clipClose(force) {
+    if (!CE) return;
+    if (!force && clipDirty()) { CE.confirm = 'abandon'; clipRender(); return; }
+    const pv = S && S.preview;
+    if (pv && pv.state !== 'idle' && (pv.key === CE.t.key || pv.item === CE.t.item) && EL) previewStop();
+    clearInterval(CE.tick); clearTimeout(CE.fetchT);
+    if (CE.box) CE.box.remove();
+    if (libTarget && libTarget.clip) libTarget = null;
+    CE = null;
+  }
+  const clipDirty = () => !!CE && JSON.stringify(CE.draft) !== CE.saved;
+  const segOf = i => CE.draft.edit.segments[i];
+  const segMedia = i => (segOf(i) && segOf(i).media) || CE.media;
+  const segName = i => { const m = segMedia(i); return (i === 0 && !segOf(0).media && CE.title) || mediaName(baseName(m.file)) || m.asset || '?'; };
+  function materialize() { CE.draft.edit.segments.forEach(s => { if (!s.media) s.media = Object.assign({}, CE.media); }); }
+  function change(fn, refetch) {
+    CE.undo.push(JSON.stringify(CE.draft)); if (CE.undo.length > 200) CE.undo.shift();
+    CE.redo = [];
+    fn(CE.draft);
+    clipRender();
+    if (refetch !== false) clipFetchSoon();
+  }
+  function undoRedo(from, to) {
+    if (!from.length) return;
+    to.push(JSON.stringify(CE.draft));
+    CE.draft = JSON.parse(from.pop());
+    if (CE.seg >= CE.draft.edit.segments.length) CE.seg = 0;
+    clipRender(); clipFetchSoon();
+  }
+  function clipFetchSoon(fit) { clearTimeout(CE.fetchT); CE.fetchT = setTimeout(() => clipFetch(fit), 90); }
+
+  async function clipFetch(fit) {
+    if (!CE) return;
+    const seq = ++CE.seq;
+    const cv = CE.box.querySelector('.cart-clip-wave');
+    const pts = Math.min(4000, Math.max(200, Math.round((cv ? cv.clientWidth : 800) * (window.devicePixelRatio || 1))));
+    const a = (!fit && CE.win) ? CE.win[0] : 0, b = (!fit && CE.win) ? CE.win[1] : 0;
+    let d = null;
+    try {
+      if (CE.view === 'mix') {
+        d = await jpost('/montage/wave', Object.assign(tb(), {edit: CE.draft.edit, from_ms: a, to_ms: b, points: pts}));
+        if (CE && seq === CE.seq) CE.layout = d.layout || [];
+      } else {
+        const m = segMedia(CE.seg);
+        d = await jget('/wave?asset=' + encodeURIComponent(m.asset || '') + '&file=' + encodeURIComponent(m.file || '')
+                       + '&from_ms=' + a + '&to_ms=' + b + '&points=' + pts);
+        // the layout (source ↔ edited time) is what the pre-listen of a source point needs
+        jpost('/montage/wave', Object.assign(tb(), {edit: CE.draft.edit, from_ms: 0, to_ms: 1, points: 1}))
+          .then(l => { if (CE && seq === CE.seq) CE.layout = l.layout || []; }).catch(() => {});
+      }
+      if (!CE || seq !== CE.seq) return;
+      CE.err = '';
+      CE.dom = d.duration_ms;
+      if (fit || !CE.win || CE.win[1] > CE.dom + 1) CE.win = [0, CE.dom];
+      CE.wave = d;
+    } catch (e) {
+      if (!CE || seq !== CE.seq) return;
+      CE.err = e.message;
+      if (e.code === 'media_not_ready') CE.fetchT = setTimeout(() => clipFetch(fit), 2000);   // decoding: retried
+    }
+    clipPaintMeta();
+    clipDraw();
+  }
+
+  // ── view window: zoom (buttons, pinch, wheel) and pan ──
+  function setWin(a, b) {
+    const dom = CE.dom || 1, minW = Math.min(dom, 20);
+    let w = Math.max(minW, Math.min(dom, b - a));
+    a = Math.max(0, Math.min(dom - w, a));
+    CE.win = [a, a + w];
+    clipDraw(); clipPaintMeta(); clipFetchSoon();
+  }
+  function zoomAt(c, f) { const [a, b] = CE.win; setWin(c - (c - a) * f, c + (b - c) * f); }
+  function tAt(clientX) {
+    const cv = CE.box.querySelector('.cart-clip-wave'), r = cv.getBoundingClientRect();
+    return CE.win[0] + (clientX - r.left) / Math.max(1, r.width) * (CE.win[1] - CE.win[0]);
+  }
+  const ENV_DB_MIN = -60, ENV_DB_MAX = 12;
+  const envY = (db, H) => H * (1 - (db - ENV_DB_MIN) / (ENV_DB_MAX - ENV_DB_MIN));
+  function hitEnv(e) {
+    if (CE.view !== 'mix' || !CE.win) return null;
+    const cv = CE.box.querySelector('.cart-clip-wave'), r = cv.getBoundingClientRect();
+    const env = CE.draft.edit.envelope;
+    for (let i = 0; i < env.length; i++) {
+      const x = r.left + (env[i][0] - CE.win[0]) / (CE.win[1] - CE.win[0]) * r.width;
+      const y = r.top + envY(env[i][1], r.height);
+      if (Math.hypot(e.clientX - x, e.clientY - y) <= 22) return i;
+    }
+    return null;
+  }
+  function wireCanvas(cv) {
+    cv.addEventListener('pointerdown', e => {
+      if (!CE || !CE.win) return;
+      cv.setPointerCapture(e.pointerId);
+      CE.ptrs.set(e.pointerId, {x: e.clientX, y: e.clientY});
+      if (CE.ptrs.size === 2) {
+        const [p, q] = [...CE.ptrs.values()];
+        CE.pinch = {d0: Math.max(10, Math.abs(p.x - q.x)), win0: CE.win.slice(), c: tAt((p.x + q.x) / 2)};
+        CE.drag = null;
+      } else if (CE.ptrs.size === 1) {
+        CE.drag = {x0: e.clientX, y0: e.clientY, win0: CE.win.slice(), moved: false, env: hitEnv(e), pushed: false};
+      }
+    });
+    cv.addEventListener('pointermove', e => {
+      if (!CE || !CE.ptrs.has(e.pointerId)) return;
+      CE.ptrs.set(e.pointerId, {x: e.clientX, y: e.clientY});
+      const r = cv.getBoundingClientRect();
+      if (CE.pinch && CE.ptrs.size >= 2) {
+        const [p, q] = [...CE.ptrs.values()];
+        const f = CE.pinch.d0 / Math.max(10, Math.abs(p.x - q.x)), [a, b] = CE.pinch.win0, c = CE.pinch.c;
+        setWin(c - (c - a) * f, c + (b - c) * f);
+        return;
+      }
+      const d = CE.drag;
+      if (!d) return;
+      if (!d.moved && Math.hypot(e.clientX - d.x0, e.clientY - d.y0) < 8) return;
+      d.moved = true;
+      if (d.env != null) {               // dragging an envelope point: time and level
+        if (!d.pushed) { CE.undo.push(JSON.stringify(CE.draft)); CE.redo = []; d.pushed = true; }
+        const env = CE.draft.edit.envelope, i = d.env;
+        const lo = i > 0 ? env[i - 1][0] + 1 : 0, hi = i < env.length - 1 ? env[i + 1][0] - 1 : CE.dom;
+        env[i][0] = Math.round(Math.max(lo, Math.min(hi, tAt(e.clientX))));
+        const db = ENV_DB_MAX - (e.clientY - r.top) / Math.max(1, r.height) * (ENV_DB_MAX - ENV_DB_MIN);
+        env[i][1] = Math.round(Math.max(ENV_DB_MIN, Math.min(ENV_DB_MAX, db)) * 2) / 2;
+        CE.envSel = i;
+        clipDraw();
+        return;
+      }
+      const [a, b] = d.win0, dt = (d.x0 - e.clientX) / Math.max(1, r.width) * (b - a);
+      setWin(a + dt, b + dt);
+    });
+    const up = e => {
+      if (!CE || !CE.ptrs.has(e.pointerId)) return;
+      CE.ptrs.delete(e.pointerId);
+      if (CE.pinch) { if (CE.ptrs.size < 2) CE.pinch = null; return; }
+      const d = CE.drag;
+      CE.drag = null;
+      if (!d) return;
+      if (!d.moved) {                    // a tap: select a point, or place the cursor
+        if (d.env != null) CE.envSel = d.env;
+        else { CE.cursor = Math.max(0, Math.min(CE.dom, tAt(e.clientX))); CE.envSel = null; }
+        clipRender(); clipDraw();
+      } else if (d.env != null) { clipRender(); clipFetchSoon(); }
+    };
+    cv.addEventListener('pointerup', up);
+    cv.addEventListener('pointercancel', up);
+    cv.addEventListener('wheel', e => { if (!CE || !CE.win) return; e.preventDefault(); zoomAt(tAt(e.clientX), e.deltaY > 0 ? 1.25 : 0.8); },
+                        {passive: false});
+  }
+
+  function clipDraw() {
+    if (!CE || !CE.box) return;
+    const cv = CE.box.querySelector('.cart-clip-wave');
+    if (!cv) return;
+    const dpr = window.devicePixelRatio || 1;
+    const W = Math.max(1, Math.round(cv.clientWidth * dpr)), H = Math.max(1, Math.round(cv.clientHeight * dpr));
+    if (cv.width !== W) cv.width = W;
+    if (cv.height !== H) cv.height = H;
+    const g = cv.getContext('2d');
+    g.clearRect(0, 0, W, H);
+    if (!CE.win || !CE.wave) return;
+    const [a, b] = CE.win, span = Math.max(1e-6, b - a);
+    const X = t => (t - a) / span * W;
+    const band = (t0, t1, color) => { const x0 = Math.max(0, X(t0)), x1 = Math.min(W, X(t1)); if (x1 > x0) { g.fillStyle = color; g.fillRect(x0, 0, x1 - x0, H); } };
+    const line = (t, color, w) => { const x = X(t); if (x >= -2 && x <= W + 2) { g.fillStyle = color; g.fillRect(Math.round(x) - (w || 2) / 2, 0, w || 2, H); } };
+    const removed = cssVar('--bg-hover'), sel = cssVar('--accent-soft');
+    const s = segOf(CE.seg);
+    if (CE.view === 'src' && s) {
+      band(0, s.in_ms, removed);
+      if (s.out_ms) band(s.out_ms, CE.dom, removed);
+      s.cuts.forEach(c => band(c[0], c[1], removed));
+    } else {
+      CE.layout.forEach(p => { if (p.xf_ms) band(p.at_ms, p.at_ms + p.xf_ms, sel); });
+    }
+    if (CE.sel) band(Math.min(CE.sel[0], CE.sel[1]), Math.max(CE.sel[0], CE.sel[1]), sel);
+    const w = CE.wave, pts = w.points || [], n = pts.length, wa = w.from_ms, ws = Math.max(1e-6, w.to_ms - w.from_ms);
+    const on = cssVar('--accent'), off = cssVar('--text-muted');
+    const cut = t => CE.view === 'src' && s && (t < s.in_ms || (s.out_ms && t >= s.out_ms) || s.cuts.some(c => t >= c[0] && t < c[1]));
+    for (let x = 0; x < W; x++) {
+      const t = a + x / W * span;
+      const i = Math.floor((t - wa) / ws * n);
+      if (i < 0 || i >= n) continue;
+      const h = Math.max(1, pts[i] / 100 * (H - 4));
+      g.fillStyle = cut(t) ? off : on;
+      g.fillRect(x, (H - h) / 2, 1, h);
+    }
+    if (CE.view === 'src' && s) {
+      line(s.in_ms, cssVar('--status-running-fg'), 3);
+      if (s.out_ms) line(s.out_ms, cssVar('--status-error-fg'), 3);
+    } else {
+      const ed = CE.draft.edit;
+      CE.layout.forEach((p, i) => { if (i && p.seg !== CE.layout[i - 1].seg) line(p.at_ms, cssVar('--border-strong'), 2); });
+      g.strokeStyle = cssVar('--status-warning-fg'); g.lineWidth = 2 * dpr;
+      if (ed.fade_in_ms) { g.beginPath(); g.moveTo(X(0), H); g.lineTo(X(ed.fade_in_ms), 0); g.stroke(); }
+      if (ed.fade_out_ms) { g.beginPath(); g.moveTo(X(CE.dom - ed.fade_out_ms), 0); g.lineTo(X(CE.dom), H); g.stroke(); }
+      const env = ed.envelope;
+      if (env.length) {
+        g.strokeStyle = cssVar('--status-running-fg'); g.beginPath();
+        g.moveTo(0, envY(envDbAt(env, a), H));
+        env.forEach(p => g.lineTo(X(p[0]), envY(p[1], H)));
+        g.lineTo(W, envY(envDbAt(env, b), H)); g.stroke();
+        env.forEach((p, i) => { g.fillStyle = i === CE.envSel ? cssVar('--text-strong') : cssVar('--status-running-fg');
+          g.beginPath(); g.arc(X(p[0]), envY(p[1], H), (i === CE.envSel ? 9 : 6) * dpr, 0, 2 * Math.PI); g.fill(); });
+      }
+      if (CE.draft.intro_ms) line(CE.draft.intro_ms, cssVar('--status-warning-fg'), 2);
+      if (CE.draft.outro_ms) line(CE.draft.outro_ms, cssVar('--status-error-fg'), 2);
+    }
+    line(CE.cursor, cssVar('--text-strong'), 2);
+    const pv = S && S.preview;
+    if (pv && pv.state !== 'idle' && (pv.key === CE.t.key || pv.item === CE.t.item)) {
+      let t = pv.elapsed_ms + (pv.state === 'playing' ? Math.max(0, performance.now() - S_AT) : 0);
+      if (CE.view === 'src') { const m = mixToSrc(CE.layout, t); t = m && m.seg === CE.seg ? m.t : null; }
+      if (t != null) line(t, cssVar('--status-running-fg'), 2);
+    }
+  }
+
+  function clipPaintMeta() {
+    if (!CE || !CE.box) return;
+    const m = CE.box.querySelector('.cart-clip-time');
+    if (m) m.textContent = T('clip_cursor', 'Curseur {c}').replace('{c}', fmtMs(CE.cursor))
+      + (CE.sel ? ' · ' + T('clip_sel', 'Sélection {a} – {b}').replace('{a}', fmtMs(Math.min(...CE.sel))).replace('{b}', fmtMs(Math.max(...CE.sel))) : '')
+      + (CE.win ? ' · ' + T('clip_window', 'Vue {a} – {b}').replace('{a}', fmtMs(CE.win[0])).replace('{b}', fmtMs(CE.win[1])) : '');
+    const e = CE.box.querySelector('.cart-clip-err');
+    if (e) { e.textContent = CE.err; e.hidden = !CE.err; }
+    const d = CE.box.querySelector('.cart-clip-dur');
+    if (d) d.textContent = CE.view === 'mix' ? T('clip_dur_edit', 'Durée montée {d}').replace('{d}', fmtMs(CE.dom))
+      : T('clip_dur_file', 'Fichier {d}').replace('{d}', fmtMs(CE.dom));
+  }
+
+  function shapeSel(name, v) {
+    return `<select data-cf="${name}">${SHAPES.map(x => `<option value="${x}"${v === x ? ' selected' : ''}>${esc(T('shape_' + x, x))}</option>`).join('')}</select>`;
+  }
+  function numIn(name, v, step, min, max) {
+    return `<input type="number" data-cf="${name}" step="${step}"${min != null ? ` min="${min}"` : ''}${max != null ? ` max="${max}"` : ''} value="${v}">`;
+  }
+
+  function clipRender() {
+    if (!CE || !CE.box) return;
+    const d = CE.draft, ed = d.edit, s = segOf(CE.seg), src = CE.view === 'src';
+    const media = (S && (CE.t.key ? S.key_media : S.item_media) || {})[CE.id] || {};
+    const box = CE.box;
+    box.classList.toggle('is-picking', !!CE.picking);
+    if (CE.picking) {
+      box.innerHTML = `<div class="cart-clip-head"><span>${esc(T('clip_pick_hint', 'Choisissez dans le panneau Médias le son à ajouter à la suite.'))}</span>
+        <span class="cart-spacer"></span><button type="button" class="cart-btn" data-ca="pick-cancel">${esc(T('cancel', 'Annuler'))}</button></div>`;
+      box.querySelector('[data-ca="pick-cancel"]').onclick = () => { CE.picking = false; libTarget = null; paintLibHead(); clipRender(); clipFetchSoon(); };
+      return;
+    }
+    const conf = CE.confirm === 'abandon' ? `<div class="cart-confirm">
+        <p>${esc(T('clip_abandon_q', 'Abandonner les modifications du clip ?'))}</p>
+        <div class="cart-form-acts"><button type="button" class="cart-btn" data-ca="conf-no">${esc(T('clip_keep', 'Continuer l\'édition'))}</button>
+          <button type="button" class="cart-btn cart-danger" data-ca="conf-yes">${esc(T('clip_abandon', 'Abandonner'))}</button></div></div>`
+      : CE.confirm === 'newmedia' ? `<div class="cart-confirm">
+        <p>${esc(T('clip_new_help', 'Le montage est rendu dans un NOUVEAU fichier WAV de la base des médias, à côté du premier son ; l\'original n\'est pas touché.'))}</p>
+        <div class="cart-form">${field(T('clip_new_name', 'Nom du nouveau média'), `<input type="text" class="cart-clip-newname" maxlength="80" value="${esc(CE.newName || (CE.title + ' montage'))}">`)}</div>
+        <p class="cart-note cart-clip-jobmsg">${esc(CE.jobMsg || '')}</p>
+        <div class="cart-form-acts"><button type="button" class="cart-btn" data-ca="conf-no">${esc(T('close', 'Fermer'))}</button>
+          ${CE.job && CE.job.state === 'done' ? `<button type="button" class="cart-btn cart-primary" data-ca="use-new">${esc(T('clip_use_new', 'Utiliser le nouveau média ici'))}</button>`
+            : `<button type="button" class="cart-btn cart-primary" data-ca="render"${CE.job && CE.job.state === 'running' ? ' disabled' : ''}>${esc(T('clip_new_go', 'Créer le média'))}</button>`}</div></div>` : '';
+    box.innerHTML = `
+      <div class="cart-clip-head">
+        <strong class="cart-clip-title">✂ ${esc(CE.title || T('untitled', 'Sans titre'))}</strong>
+        <span class="cart-clip-dur"></span>
+        <span class="cart-spacer"></span>
+        <button type="button" class="cart-btn" data-ca="undo" aria-label="${esc(T('clip_undo', 'Annuler la dernière modification'))}"${CE.undo.length ? '' : ' disabled'}>↶</button>
+        <button type="button" class="cart-btn" data-ca="redo" aria-label="${esc(T('clip_redo', 'Rétablir'))}"${CE.redo.length ? '' : ' disabled'}>↷</button>
+        <button type="button" class="cart-btn" data-ca="abandon">${esc(T('clip_abandon', 'Abandonner'))}</button>
+        <button type="button" class="cart-btn" data-ca="newmedia">${esc(T('clip_new', 'Enregistrer comme nouveau média…'))}</button>
+        <button type="button" class="cart-btn cart-primary" data-ca="save"${clipDirty() ? '' : ' disabled'}>${esc(T('save', 'Enregistrer'))}</button>
+      </div>
+      ${conf}
+      <div class="cart-clip-bar">
+        <div class="cart-seg" role="group">
+          <button type="button" class="cart-btn${src ? '' : ' is-on'}" data-ca="view-mix">${esc(T('clip_view_mix', 'Montage'))}</button>
+          <button type="button" class="cart-btn${src ? ' is-on' : ''}" data-ca="view-src">${esc(T('clip_view_src', 'Source'))}</button>
+        </div>
+        <div class="cart-clip-segs">${ed.segments.map((x, i) => `<button type="button" class="cart-btn${i === CE.seg ? ' is-on' : ''}" data-segpick="${i}">${i + 1} · ${esc(segName(i))}</button>`).join('')}
+          <button type="button" class="cart-btn" data-ca="seg-add">+ ${esc(T('clip_seg_add', 'Ajouter un son à la suite'))}</button></div>
+        <span class="cart-spacer"></span>
+        <button type="button" class="cart-btn" data-ca="zoom-out" aria-label="${esc(T('clip_zoom_out', 'Dézoomer'))}">−</button>
+        <button type="button" class="cart-btn" data-ca="zoom-in" aria-label="${esc(T('clip_zoom_in', 'Zoomer'))}">+</button>
+        <button type="button" class="cart-btn" data-ca="zoom-fit">${esc(T('clip_zoom_fit', 'Tout'))}</button>
+        <button type="button" class="cart-btn" data-ca="pan-l" aria-label="${esc(T('clip_pan_left', 'Vers le début'))}">◀</button>
+        <button type="button" class="cart-btn" data-ca="pan-r" aria-label="${esc(T('clip_pan_right', 'Vers la fin'))}">▶</button>
+      </div>
+      <canvas class="cart-clip-wave"></canvas>
+      <p class="cart-note cart-clip-time"></p>
+      <p class="cart-note cart-clip-err" role="alert" hidden></p>
+      <div class="cart-clip-tools">
+        <button type="button" class="cart-btn" data-ca="sel-a">${esc(T('clip_sel_a', 'Début de sélection'))}</button>
+        <button type="button" class="cart-btn" data-ca="sel-b">${esc(T('clip_sel_b', 'Fin de sélection'))}</button>
+        <button type="button" class="cart-btn" data-ca="sel-clear"${CE.sel ? '' : ' disabled'}>${esc(T('clip_sel_clear', 'Effacer la sélection'))}</button>
+        ${src ? `<button type="button" class="cart-btn" data-ca="in">${esc(T('clip_set_in', 'In au curseur'))}</button>
+        <button type="button" class="cart-btn" data-ca="out">${esc(T('clip_set_out', 'Out au curseur'))}</button>
+        <button type="button" class="cart-btn" data-ca="cut"${CE.sel ? '' : ' disabled'}>${esc(T('clip_cut', 'Couper la sélection'))}</button>`
+        : `<button type="button" class="cart-btn" data-ca="env-add">${esc(T('clip_env_add', 'Point de volume au curseur'))}</button>
+        <button type="button" class="cart-btn" data-ca="env-del"${CE.envSel != null ? '' : ' disabled'}>${esc(T('clip_env_del', 'Supprimer le point'))}</button>
+        <button type="button" class="cart-btn" data-ca="fade-in-here">${esc(T('clip_fade_in_here', 'Fondu d\'entrée jusqu\'au curseur'))}</button>
+        <button type="button" class="cart-btn" data-ca="fade-out-here">${esc(T('clip_fade_out_here', 'Fondu de sortie depuis le curseur'))}</button>
+        <button type="button" class="cart-btn" data-ca="intro-here">${esc(T('clip_intro_here', 'Fin de l\'intro au curseur'))}</button>
+        <button type="button" class="cart-btn" data-ca="outro-here">${esc(T('clip_outro_here', 'Début de la fin au curseur'))}</button>`}
+      </div>
+      <div class="cart-clip-tools cart-clip-pfl">
+        <strong>🎧</strong>
+        <button type="button" class="cart-btn" data-pv="all">${esc(T('clip_pv_all', 'Tout le clip'))}</button>
+        <button type="button" class="cart-btn" data-pv="sel"${CE.sel ? '' : ' disabled'}>${esc(T('clip_pv_sel', 'La sélection'))}</button>
+        <button type="button" class="cart-btn" data-pv="cursor">${esc(T('clip_pv_cursor', 'Autour du curseur'))}</button>
+        ${src ? `<button type="button" class="cart-btn" data-pv="in">${esc(T('clip_pv_in', 'Autour de In'))}</button>
+        <button type="button" class="cart-btn" data-pv="out">${esc(T('clip_pv_out', 'Autour de Out'))}</button>` : ''}
+        <label class="cart-clip-small">${esc(T('clip_pre', 'Avant (s)'))} <input type="number" data-cv="pre" min="0" max="30" step="0.5" value="${CE.pre}"></label>
+        <label class="cart-clip-small">${esc(T('clip_post', 'Après (s)'))} <input type="number" data-cv="post" min="0" max="30" step="0.5" value="${CE.post}"></label>
+        <button type="button" class="cart-btn" data-pv="stop" aria-label="${esc(T('pfl_stop', 'Arrêter la pré-écoute'))}">■</button>
+      </div>
+      <h3 class="cart-h">${esc(T('clip_sec_seg', 'Son {n} : {t}').replace('{n}', CE.seg + 1).replace('{t}', segName(CE.seg)))}</h3>
+      <div class="cart-form">
+        ${field(T('clip_in', 'In (ms dans le fichier)'), numIn('in_ms', s.in_ms, 10, 0))}
+        ${field(T('clip_out', 'Out (ms dans le fichier, 0 = fin)'), numIn('out_ms', s.out_ms, 10, 0))}
+        ${CE.seg > 0 ? field(T('clip_xfade', 'Fondu enchaîné avec le son précédent (ms)'), numIn('xfade_ms', s.xfade_ms, 50, 0, 30000))
+          + field(T('clip_xfade_shape', 'Forme du fondu enchaîné'), shapeSel('xfade_shape', s.xfade_shape)) : ''}
+      </div>
+      <ul class="cart-clip-list">${s.cuts.map((c, i) => `<li><span>${esc(T('clip_cut_n', 'Coupe {a} – {b}').replace('{a}', fmtMs(c[0])).replace('{b}', fmtMs(c[1])))}</span>
+          <button type="button" class="cart-btn" data-cutpv="${i}">🎧 ${esc(T('clip_pv_cut', 'Écouter le raccord'))}</button>
+          <button type="button" class="cart-btn cart-danger" data-cutdel="${i}" aria-label="${esc(T('delete', 'Supprimer'))}">✕</button></li>`).join('')}</ul>
+      ${ed.segments.length > 1 ? `<div class="cart-form-acts">
+        <button type="button" class="cart-btn" data-ca="seg-left">${esc(T('clip_seg_left', 'Placer plus tôt'))}</button>
+        <button type="button" class="cart-btn" data-ca="seg-right">${esc(T('clip_seg_right', 'Placer plus tard'))}</button>
+        <button type="button" class="cart-btn cart-danger" data-ca="seg-del">${esc(T('clip_seg_del', 'Retirer ce son du montage'))}</button></div>` : ''}
+      <h3 class="cart-h">${esc(T('clip_sec_mix', 'Montage'))}</h3>
+      <div class="cart-form">
+        ${field(T('clip_fade_in', 'Fondu d\'entrée (ms)'), numIn('fade_in_ms', ed.fade_in_ms, 50, 0, 60000))}
+        ${field(T('clip_fade_in_shape', 'Forme du fondu d\'entrée'), shapeSel('fade_in_shape', ed.fade_in_shape))}
+        ${field(T('clip_fade_out', 'Fondu de sortie (ms)'), numIn('fade_out_ms', ed.fade_out_ms, 50, 0, 60000))}
+        ${field(T('clip_fade_out_shape', 'Forme du fondu de sortie'), shapeSel('fade_out_shape', ed.fade_out_shape))}
+        ${field(T('f_gain', 'Gain de la touche (dB)'), numIn('gain_db', d.gain_db, 0.5, -40, 20))}
+        ${field(T('f_intro', 'Fin de l\'intro (ms)'), numIn('intro_ms', d.intro_ms, 100, 0))}
+        ${field(T('f_outro', 'Début de la fin (ms)'), numIn('outro_ms', d.outro_ms, 100, 0))}
+      </div>
+      <p class="cart-note">${esc(media.norm_db != null ? T('clip_norm', 'Normalisation R128 : chaque son est amené à la cible du cartouchier ({g} dB pour le premier) — réglage dans Réglages, Niveaux.').replace('{g}', media.norm_db)
+        : T('clip_norm_off', 'Normalisation R128 : selon Réglages, Niveaux (chaque son du montage à la cible).'))}</p>
+      <ul class="cart-clip-list">${ed.envelope.map((p, i) => `<li class="${i === CE.envSel ? 'is-on' : ''}">
+          <span>${esc(T('clip_env_n', 'Point {n}').replace('{n}', i + 1))}</span>
+          <label class="cart-clip-small">ms <input type="number" data-envt="${i}" step="10" min="0" value="${p[0]}"></label>
+          <label class="cart-clip-small">dB <input type="number" data-envdb="${i}" step="0.5" min="-60" max="12" value="${p[1]}"></label>
+          <button type="button" class="cart-btn cart-danger" data-envdel="${i}" aria-label="${esc(T('delete', 'Supprimer'))}">✕</button></li>`).join('')}</ul>`;
+    clipWire();
+    clipPaintMeta();
+    requestAnimationFrame(clipDraw);
+  }
+
+  function clipWire() {
+    const box = CE.box, on = (sel, fn) => box.querySelectorAll(sel).forEach(b => { b.onclick = () => fn(b); });
+    const cv = box.querySelector('.cart-clip-wave');
+    if (cv) wireCanvas(cv);
+    const act = {
+      undo: () => undoRedo(CE.undo, CE.redo), redo: () => undoRedo(CE.redo, CE.undo),
+      abandon: () => clipClose(false), save: () => clipSave(),
+      newmedia: () => { CE.confirm = 'newmedia'; CE.job = null; CE.jobMsg = ''; clipRender(); },
+      'conf-no': () => { CE.confirm = null; clipRender(); }, 'conf-yes': () => clipClose(true),
+      render: () => clipRenderMedia(), 'use-new': () => clipUseNew(),
+      'view-mix': () => { if (CE.view !== 'mix') { CE.view = 'mix'; CE.sel = null; CE.cursor = 0; clipRender(); clipFetch(true); } },
+      'view-src': () => { if (CE.view !== 'src') { CE.view = 'src'; CE.sel = null; CE.cursor = segOf(CE.seg).in_ms; clipRender(); clipFetch(true); } },
+      'zoom-in': () => zoomAt(CE.cursor >= CE.win[0] && CE.cursor <= CE.win[1] ? CE.cursor : (CE.win[0] + CE.win[1]) / 2, 0.5),
+      'zoom-out': () => zoomAt((CE.win[0] + CE.win[1]) / 2, 2), 'zoom-fit': () => setWin(0, CE.dom),
+      'pan-l': () => { const w = CE.win[1] - CE.win[0]; setWin(CE.win[0] - w / 2, CE.win[1] - w / 2); },
+      'pan-r': () => { const w = CE.win[1] - CE.win[0]; setWin(CE.win[0] + w / 2, CE.win[1] + w / 2); },
+      'sel-a': () => { CE.sel = [CE.cursor, CE.sel ? CE.sel[1] : CE.cursor]; clipRender(); },
+      'sel-b': () => { CE.sel = [CE.sel ? CE.sel[0] : CE.cursor, CE.cursor]; clipRender(); },
+      'sel-clear': () => { CE.sel = null; clipRender(); },
+      in: () => { const s = segOf(CE.seg); if (s.out_ms && CE.cursor >= s.out_ms) return TOAST(T('clip_bad_in', 'In après Out'), 'warning');
+        change(() => { s.in_ms = Math.round(CE.cursor); }); },
+      out: () => { const s = segOf(CE.seg); if (CE.cursor <= s.in_ms) return TOAST(T('clip_bad_out', 'Out avant In'), 'warning');
+        change(() => { s.out_ms = Math.round(CE.cursor); }); },
+      cut: () => { const a = Math.round(Math.min(...CE.sel)), b = Math.round(Math.max(...CE.sel)); if (b - a < 1) return;
+        change(() => { segOf(CE.seg).cuts.push([a, b]); segOf(CE.seg).cuts.sort((x, y) => x[0] - y[0]); }); CE.sel = null; },
+      'env-add': () => { const env = CE.draft.edit.envelope, t = Math.round(CE.cursor);
+        if (env.some(p => p[0] === t)) return;
+        change(d => { d.edit.envelope.push([t, Math.round(envDbAt(env, t) * 2) / 2]); d.edit.envelope.sort((x, y) => x[0] - y[0]); });
+        CE.envSel = CE.draft.edit.envelope.findIndex(p => p[0] === t); clipRender(); },
+      'env-del': () => { const i = CE.envSel; CE.envSel = null; change(d => { d.edit.envelope.splice(i, 1); }); },
+      'fade-in-here': () => change(d => { d.edit.fade_in_ms = Math.round(CE.cursor); }),
+      'fade-out-here': () => change(d => { d.edit.fade_out_ms = Math.round(Math.max(0, CE.dom - CE.cursor)); }),
+      'intro-here': () => change(d => { d.intro_ms = Math.round(CE.cursor); }, false),
+      'outro-here': () => change(d => { d.outro_ms = Math.round(CE.cursor); }, false),
+      'seg-add': () => { CE.picking = true; clipRender();
+        openLibrary({clip: (media, title) => clipAddSegment(media, title)}, T('clip_pick', 'Son à ajouter au montage')); },
+      'seg-left': () => moveSeg(-1), 'seg-right': () => moveSeg(1),
+      'seg-del': () => { const i = CE.seg; change(d => { materialize(); d.edit.segments.splice(i, 1); }); CE.seg = Math.max(0, i - 1); clipRender(); },
+    };
+    on('[data-ca]', b => { const f = act[b.dataset.ca]; if (f) f(); });
+    on('[data-segpick]', b => { CE.seg = +b.dataset.segpick; CE.sel = null; if (CE.view === 'src') { CE.cursor = segOf(CE.seg).in_ms; clipRender(); clipFetch(true); } else clipRender(); });
+    on('[data-pv]', b => clipPreview(b.dataset.pv));
+    on('[data-cutpv]', b => { const c = segOf(CE.seg).cuts[+b.dataset.cutpv]; clipPreviewAt(srcToMix(CE.layout, CE.seg, c[1])); });
+    on('[data-cutdel]', b => change(() => { segOf(CE.seg).cuts.splice(+b.dataset.cutdel, 1); }));
+    on('[data-envdel]', b => { CE.envSel = null; change(d => { d.edit.envelope.splice(+b.dataset.envdel, 1); }); });
+    box.querySelectorAll('[data-cf]').forEach(i => {
+      i.onchange = () => {
+        const f = i.dataset.cf, v = i.tagName === 'SELECT' ? i.value : (+i.value || 0);
+        change(d => {
+          if (f === 'gain_db' || f === 'intro_ms' || f === 'outro_ms') d[f] = v;
+          else if (f in d.edit) d.edit[f] = v;
+          else segOf(CE.seg)[f] = v;
+        }, !(f === 'intro_ms' || f === 'outro_ms'));
+      };
+    });
+    box.querySelectorAll('[data-envt],[data-envdb]').forEach(i => {
+      i.onchange = () => change(d => {
+        const k = i.dataset.envt != null ? +i.dataset.envt : +i.dataset.envdb;
+        if (i.dataset.envt != null) d.edit.envelope[k][0] = Math.max(0, Math.round(+i.value || 0));
+        else d.edit.envelope[k][1] = Math.max(ENV_DB_MIN, Math.min(ENV_DB_MAX, +i.value || 0));
+        d.edit.envelope.sort((x, y) => x[0] - y[0]);
+      });
+    });
+    box.querySelectorAll('[data-cv]').forEach(i => { i.onchange = () => { CE[i.dataset.cv] = Math.max(0, Math.min(30, +i.value || 0)); }; });
+    const nn = box.querySelector('.cart-clip-newname');
+    if (nn) nn.oninput = () => { CE.newName = nn.value; };
+  }
+  function moveSeg(delta) {
+    const i = CE.seg, j = i + delta, n = CE.draft.edit.segments.length;
+    if (j < 0 || j >= n) return;
+    change(d => { materialize(); const s = d.edit.segments; s.splice(j, 0, s.splice(i, 1)[0]); });
+    CE.seg = j; clipRender();
+  }
+  function clipAddSegment(media, title) {
+    if (!CE) return;
+    CE.picking = false;
+    change(d => { materialize(); d.edit.segments.push({media, in_ms: 0, out_ms: 0, cuts: [], xfade_ms: 0, xfade_shape: 'eq'}); });
+    CE.seg = CE.draft.edit.segments.length - 1;
+    clipRender();
+    if (media.asset && !media.file) fetchToNode(media.asset, title);       // not on this node yet: fetched
+  }
+
+  // ── pre-listen inside the editor (always on the EDITED timeline: a source point is mapped) ──
+  function clipPreviewAt(c) {
+    return clipPreviewRange(Math.max(0, c - CE.pre * 1000), c + CE.post * 1000);
+  }
+  function clipPreviewRange(a, b) {
+    a = Math.max(0, Math.round(a)); b = Math.round(b);
+    if (b && b <= a) b = a + 1;
+    return previewPlay(Object.assign(tb(), {edit: CE.draft.edit, gain_db: CE.draft.gain_db, start_ms: a, end_ms: b}));
+  }
+  function clipPreview(what) {
+    const src = CE.view === 'src', s = segOf(CE.seg), map = t => src ? srcToMix(CE.layout, CE.seg, t) : t;
+    if (what === 'stop') return previewStop();
+    if (what === 'all') return clipPreviewRange(0, 0);
+    if (what === 'sel' && CE.sel) return clipPreviewRange(map(Math.min(...CE.sel)), map(Math.max(...CE.sel)));
+    if (what === 'cursor') return clipPreviewAt(map(CE.cursor));
+    if (what === 'in') return clipPreviewAt(srcToMix(CE.layout, CE.seg, s.in_ms));
+    if (what === 'out') return clipPreviewAt(srcToMix(CE.layout, CE.seg, s.out_ms || 1e12));
+    return null;
+  }
+
+  async function clipSave() {
+    const d = CE.draft, body = {id: CE.id, edit: d.edit, gain_db: d.gain_db, intro_ms: d.intro_ms, outro_ms: d.outro_ms};
+    let r;
+    if (CE.t.key) {
+      const f = findKeyDoc(CE.t.key);
+      if (!f) return TOAST(T('err_unknown_key', 'Touche inconnue'), 'error');
+      r = await post('/key', {page: f.p.id, key: body});
+    } else r = await post('/playlist', {op: 'update', item: body});
+    if (r && CE) { CE.saved = JSON.stringify(CE.draft); clipClose(true); TOAST(T('clip_saved', 'Montage enregistré'), 'info'); }
+  }
+
+  // « Save as new media »: rendered by the container (24-bit WAV + sidecar carrying the identity,
+  // origin="cartouchier", derived_from), then the node's media scan is asked for so the base sees it.
+  async function clipRenderMedia() {
+    const name = (CE.newName || (CE.title + ' montage')).trim();
+    CE.job = {state: 'running', pct: 0}; CE.jobMsg = T('clip_rendering', 'Rendu en cours…'); clipRender();
+    const d = await post('/montage/render', Object.assign(tb(), {edit: CE.draft.edit, gain_db: CE.draft.gain_db, name}));
+    if (!d || !CE) { if (CE) { CE.job = null; CE.jobMsg = ''; clipRender(); } return; }
+    for (let i = 0; i < 1200 && CE; i++) {
+      await sleep(500);
+      let j;
+      try { j = await jget('/montage/job?id=' + encodeURIComponent(d.job)); } catch (e) { j = {state: 'failed', error: e.code}; }
+      if (!CE) return;
+      CE.job = j;
+      if (j.state === 'running') { CE.jobMsg = T('clip_rendering_pct', 'Rendu en cours… {p} %').replace('{p}', j.pct || 0); clipPaintJob(); continue; }
+      if (j.state === 'done') {
+        CE.jobMsg = T('clip_new_done', 'Nouveau média « {f} » créé ({d}).').replace('{f}', mediaName(baseName(j.file))).replace('{d}', fmtMs(j.duration_ms))
+          + (j.clipped ? ' ' + T('clip_new_clipped', '{n} échantillon(s) écrêté(s) : baissez le gain.').replace('{n}', j.clipped) : '');
+        fetch('/api/media/scan', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({vmid: VMID})}).catch(() => {});
+      } else CE.jobMsg = T('err_' + (j.error || 'render_failed'), T('err_render_failed', 'Rendu impossible'));
+      clipRender();
+      return;
+    }
+  }
+  function clipPaintJob() { const m = CE && CE.box.querySelector('.cart-clip-jobmsg'); if (m) m.textContent = CE.jobMsg || ''; }
+  async function clipUseNew() {
+    const j = CE.job, media = {asset: j.asset, file: j.file};
+    let r;
+    if (CE.t.key) { const f = findKeyDoc(CE.t.key); r = f && await post('/key', {page: f.p.id, key: {id: CE.id, media, edit: null, gain_db: 0}}); }
+    else r = await post('/playlist', {op: 'update', item: {id: CE.id, media, edit: null, gain_db: 0}});
+    if (r && CE) clipClose(true);
+  }
+
   // ── main render + poll ──
   function renderMain() {
     if (!EL || !DOC) return;
@@ -1105,6 +1851,7 @@
       try { DOC = await get('/doc'); DOC_REV = st.doc_rev; } catch (e) { return; }
     }
     renderPlayers();
+    listenPaint();
     // Re-render the grid / playlist only when something it shows has changed — not every 250 ms,
     // which would eat taps on a slow tablet. Never during a pointer drag: it would drop the target.
     const sig = JSON.stringify([DOC_REV, EDIT, st.players.map(p => [p.player, p.state, p.key, p.origin]),
@@ -1119,12 +1866,14 @@
     BASE = (ctx && ctx.base) || null;
     PUBLIC = !!BASE;
     skeleton();
+    listenMount();
     document.addEventListener('ml:uploaded', onUploaded);
     poll();
     timer = setInterval(poll, 250);
   }
 
   function unmount() {
+    listenStop(); clipClose(true);
     if (timer) { clearInterval(timer); timer = null; }
     if (raf) { cancelAnimationFrame(raf); raf = null; }
     clearTimeout(undoTimer);
@@ -1138,5 +1887,5 @@
 
   if (typeof window === 'undefined') return;
   window.MXLPlugins = window.MXLPlugins || {};
-  window.MXLPlugins.cartouchier = {mount, unmount, _pure: {effectiveOf, matchUpload, parseDrop, DEFAULTS0}};
+  window.MXLPlugins.cartouchier = {mount, unmount, _pure: {effectiveOf, matchUpload, parseDrop, DEFAULTS0, srcToMix, mixToSrc, envDbAt}};
 })();
