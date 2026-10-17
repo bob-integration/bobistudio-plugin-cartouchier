@@ -1,7 +1,16 @@
 {
-  "version": "0.1.2",
+  "version": "0.1.3",
   "date": "2026-10-17",
   "changes": {
+    "Sauvegarder, exporter, importer, rappeler (0.1.3)": [
+      "★ Sauvegardes PAR MODE, séparément : la GRILLE (taille, toutes les pages, leurs touches et leurs défauts de page), la PLAYLIST (éléments et options A/B, enchaînement, boucle), ou UNE PAGE seule. Rappeler une playlist ne touche pas à la grille, et inversement.",
+      "Une page se rappelle dans n'importe quelle page (la remplacer, ou l'ajouter comme nouvelle page), y compris dans un autre cartouchier : chaque touche garde sa ligne et sa colonne, une touche qui ne tient pas prend le premier emplacement libre (compté dans le rapport).",
+      "Bibliothèque COMMUNE à l'installation (préréglages typés de l'orchestrateur, plugin_store) : menu « Sauvegardes » dans chaque mode — enregistrer sous un nom, rappeler (liste avec date et auteur), exporter (une sauvegarde ou tout un genre, fichier JSON), importer, supprimer. Confirmation intégrée à la page avant tout remplacement.",
+      "★ Rappel SANS COUPURE : ce qui joue continue jusqu'au bout ou jusqu'à son arrêt ; seules les touches ou la playlist changent. Une touche nouvelle ne prend jamais l'identifiant d'un son encore en lecture (sinon l'appui agirait sur l'ancien son) ; /flows et le décompte restent ceux des lecteurs.",
+      "Médias par IDENTITÉ (comme les touches) : à l'import, un média inconnu de la base est SIGNALÉ (sauvegarde gardée, compte affiché) ; au rappel, un son absent du nœud est listé dans le rapport, la touche est gardée et marquée « manquant ».",
+      "Macros / pupitres : « Rappeler une grille », « Rappeler une playlist », « Rappeler une page dans une page » (listes vivantes filtrées par genre ; page cible au choix, ou ajout).",
+      "Conteneur : GET /capture?kind=&page= et POST /recall (persisté, control.persist.settings)."
+    ],
     "Affecter un son plus vite, défauts des touches (0.1.2)": [
       "★ En mode Édition, le gestionnaire de médias (composant commun MediaLibrary) s'affiche directement à côté de la grille ou de la playlist (en dessous sur un écran étroit) ; hors édition, il disparaît.",
       "Affecter un son : le GLISSER du panneau sur une touche, ou sur un emplacement de la playlist (inséré à cette position) — à la souris (glisser HTML5 des lignes de la bibliothèque) ET au doigt (pointer events : appui long sur le média, puis glisser) ; ou TOUCHER le média (il reste en surbrillance) PUIS la touche. Affectation immédiate et enregistrée (`POST /assign`, persisté), sans « Affecter » ni « Enregistrer » ; le titre reprend le nom du média.",

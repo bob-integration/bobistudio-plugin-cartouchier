@@ -154,6 +154,7 @@
           <div class="cart-pages" role="tablist"></div>
           <span class="cart-spacer"></span>
           <label class="cart-edit-sw"${PUBLIC ? ' hidden' : ''}><input type="checkbox" class="ctl-switch cart-edit-in"> ${esc(T('edit', 'Édition'))}</label>
+          <button type="button" class="cart-btn cart-saves-btn"${PUBLIC ? ' hidden' : ''}>${esc(T('sv_title', 'Sauvegardes'))}</button>
           <button type="button" class="cart-btn cart-settings-btn"${PUBLIC ? ' hidden' : ''}>${esc(T('settings', 'Réglages'))}</button>
           <button type="button" class="cart-btn cart-stopall"${PUBLIC ? ' hidden' : ''}>${esc(T('stop_all', 'Tout arrêter'))}</button>
         </div>
@@ -178,10 +179,12 @@
         </div>
         <div class="cart-panel cart-editor" hidden></div>
         <div class="cart-panel cart-settings" hidden></div>
+        <div class="cart-panel cart-saves" hidden></div>
       </div>`;
     EL.querySelectorAll('[data-mode]').forEach(b => { b.onclick = () => post('/mode', {mode: b.dataset.mode}); });
     $('.cart-edit-in').onchange = e => { EDIT = e.target.checked; syncLib(); renderMain(); };
     $('.cart-settings-btn').onclick = () => openSettings();
+    $('.cart-saves-btn').onclick = () => openSaves();
     $('.cart-stopall').onclick = () => post('/stop_all', {cut: false});
     $('.cart-lib-close').onclick = () => { libTarget = null; if (!EDIT) $('.cart-libwrap').hidden = true; paintLibHead(); };
     $('.cart-lib-cancel').onclick = () => { libTarget = null; if (!EDIT) $('.cart-libwrap').hidden = true; paintLibHead(); };
@@ -1084,12 +1087,249 @@
     };
   }
 
+  // ── SAVE / RECALL (0.1.3) ───────────────────────────────────────────────────────────────────
+  // Saves live in the COMMON library of the installation (orchestrator: plugin_store, generic kinded
+  // presets — app/plugin_library.py), one list per KIND: the grid (every page), the playlist, one page.
+  // Recalling replaces only that part, never what plays. Rights = the presets': list and export with
+  // the login, save / delete / import / recall with `plugins.operate`. Every call is outside the
+  // plugin proxy: skipped in public mode (the button is hidden there).
+  const LIB_T = 'cartouchier';
+  const canOperate = () => !!(window.hasPerm && window.hasPerm('plugins.operate'));
+  let SV = {kind: null, confirm: null, report: null, lists: {}};
+  const KIND_LABEL = {grid: () => T('sv_kind_grid', 'Grille'), playlist: () => T('sv_kind_playlist', 'Playlist'),
+                      page: () => T('sv_kind_page', 'Page')};
+
+  async function svFetch(url, opts) {
+    let r, d = {};
+    try {
+      r = await fetch(url, Object.assign({cache: 'no-store'}, opts || {}));
+      d = await r.json().catch(() => ({}));
+    } catch (e) { return {ok: false, status: 0, data: {error: 'unreachable'}}; }
+    return {ok: r.ok && d.ok !== false, status: r.status, data: d};
+  }
+  const svJson = (method, url, body) => svFetch(url, {method, headers: {'Content-Type': 'application/json'},
+                                                      body: JSON.stringify(body || {})});
+  function svErr(res) {
+    if (res.status === 403) return T('err_forbidden', 'Droit insuffisant');
+    return errText(res.data, res.status);
+  }
+  function fmtWhen(s) {
+    if (!s) return '';
+    const d = new Date(s);
+    return isNaN(d) ? String(s) : d.toLocaleString(undefined, {dateStyle: 'short', timeStyle: 'short'});
+  }
+  function svSummary(sv) {
+    const m = sv.summary || {}, parts = [];
+    if (m.pages != null) parts.push(T('sv_n_pages', '{n} page(s)').replace('{n}', m.pages));
+    if (m.keys != null) parts.push(T('sv_n_keys', '{n} touche(s)').replace('{n}', m.keys));
+    if (m.items != null) parts.push(T('sv_n_items', '{n} élément(s)').replace('{n}', m.items));
+    return parts.join(' · ');
+  }
+  async function svLoad(kind) {
+    const res = await svFetch('/api/plugins/' + LIB_T + '/library?kind=' + encodeURIComponent(kind));
+    SV.lists[kind] = res.ok ? (res.data.saves || []) : [];
+    return res;
+  }
+  function openSaves() {
+    if (PUBLIC) return;
+    const box = $('.cart-saves');
+    if (!box.hidden) { box.hidden = true; return; }
+    SV = {kind: null, confirm: null, report: null, lists: {}, sig: DOC ? DOC.mode + '|' + DOC.page : null};
+    box.hidden = false;
+    svRefresh();
+  }
+  async function svRefresh() {
+    const box = $('.cart-saves');
+    if (!box || box.hidden || !DOC) return;
+    const kinds = DOC.mode === 'playlist' ? ['playlist'] : ['grid', 'page'];
+    await Promise.all(kinds.map(svLoad));
+    svPaint();
+  }
+  function svPaint() {
+    const box = $('.cart-saves');
+    if (!box || box.hidden || !DOC) return;
+    const op = canOperate();
+    const pg = curPage();
+    const pgName = pg.name || T('page_n', 'Page {n}').replace('{n}', DOC.pages.indexOf(pg) + 1);
+    const kinds = DOC.mode === 'playlist' ? ['playlist'] : ['grid', 'page'];
+    const saveLbl = {grid: T('sv_save_grid', 'Enregistrer la grille sous…'),
+                     playlist: T('sv_save_playlist', 'Enregistrer la playlist sous…'),
+                     page: T('sv_save_page', 'Enregistrer cette page sous…')};
+    const title = {grid: T('sv_h_grid', 'Grille (toutes les pages)'), playlist: T('sv_h_playlist', 'Playlist'),
+                   page: T('sv_h_page', 'Page affichée : {p}').replace('{p}', pgName)};
+    const rows = kind => (SV.lists[kind] || []).map(sv => {
+      const c = SV.confirm && SV.confirm.id === sv.id ? SV.confirm : null;
+      const recallBtns = kind === 'page'
+        ? `<button type="button" class="cart-btn" data-sv="recall" data-id="${sv.id}">${esc(T('sv_recall_here', 'Rappeler ici'))}</button>
+           <button type="button" class="cart-btn" data-sv="add" data-id="${sv.id}">${esc(T('sv_recall_add', 'Ajouter comme nouvelle page'))}</button>`
+        : `<button type="button" class="cart-btn" data-sv="recall" data-id="${sv.id}">${esc(T('sv_recall', 'Rappeler'))}</button>`;
+      return `<li class="cart-sv-row" data-id="${sv.id}">
+        <div class="cart-sv-info"><strong>${esc(sv.name)}</strong>
+          <span class="cart-note">${esc([fmtWhen(sv.updated_at || sv.created_at), sv.author, svSummary(sv)].filter(Boolean).join(' · '))}</span>
+          ${sv.missing_media ? `<span class="cart-sv-miss">${esc(T('sv_missing_n', '{n} son(s) introuvable(s) dans la base').replace('{n}', sv.missing_media))}</span>` : ''}</div>
+        <div class="cart-sv-acts">
+          ${op ? recallBtns : ''}
+          <button type="button" class="cart-btn" data-sv="export" data-id="${sv.id}">${esc(T('sv_export', 'Exporter'))}</button>
+          ${op ? `<button type="button" class="cart-btn cart-danger" data-sv="delete" data-id="${sv.id}">${esc(T('delete', 'Supprimer'))}</button>` : ''}
+        </div>
+        ${c ? `<div class="cart-sv-confirm" role="alert"><span>${esc(c.text)}</span>
+          <button type="button" class="cart-btn cart-primary" data-sv="yes">${esc(c.yes)}</button>
+          <button type="button" class="cart-btn" data-sv="no">${esc(T('cancel', 'Annuler'))}</button></div>` : ''}
+      </li>`;
+    }).join('') || `<li class="cart-note">${esc(T('sv_none', 'Aucune sauvegarde de ce genre.'))}</li>`;
+    const nameConfirm = SV.confirm && SV.confirm.overwrite ? SV.confirm : null;
+    box.innerHTML = `
+      <div class="cart-panel-head"><strong>${esc(T('sv_title', 'Sauvegardes'))}</strong>
+        <span class="cart-spacer"></span>
+        <button type="button" class="cart-btn cart-sv-close">${esc(T('close', 'Fermer'))}</button></div>
+      <p class="cart-note">${esc(T('sv_hint', 'Bibliothèque commune à l\'installation : rappelable depuis tout cartouchier. Un rappel ne coupe rien : ce qui joue continue jusqu\'au bout.'))}</p>
+      ${SV.report ? `<div class="cart-sv-report" role="status">${SV.report}</div>` : ''}
+      ${kinds.map(kind => `
+        <h3 class="cart-h">${esc(title[kind])}</h3>
+        ${op ? `<div class="cart-sv-save" data-kind="${kind}">
+          <label class="cart-field"><span>${esc(T('sv_name', 'Nom'))}</span><input type="text" maxlength="60" class="cart-sv-name"></label>
+          <button type="button" class="cart-btn cart-primary" data-sv="save" data-kind="${kind}">${esc(saveLbl[kind])}</button>
+          ${nameConfirm && nameConfirm.kind === kind ? `<div class="cart-sv-confirm" role="alert"><span>${esc(nameConfirm.text)}</span>
+            <button type="button" class="cart-btn cart-primary" data-sv="yes">${esc(nameConfirm.yes)}</button>
+            <button type="button" class="cart-btn" data-sv="no">${esc(T('cancel', 'Annuler'))}</button></div>` : ''}
+        </div>` : ''}
+        <ul class="cart-sv-list">${rows(kind)}</ul>
+        <div class="cart-form-acts">
+          <button type="button" class="cart-btn" data-sv="export_all" data-kind="${kind}">${esc(T('sv_export_all', 'Tout exporter ({k})').replace('{k}', KIND_LABEL[kind]()))}</button>
+          ${op ? `<label class="cart-btn cart-sv-import">${esc(T('sv_import', 'Importer un fichier…'))}<input type="file" accept="application/json,.json" data-kind="${kind}" hidden></label>
+          <label class="cart-sw"><input type="checkbox" class="ctl-switch cart-sv-overwrite"> ${esc(T('sv_import_overwrite', 'Remplacer les noms déjà pris'))}</label>` : ''}
+        </div>`).join('')}`;
+    sectionize(box);
+    box.querySelector('.cart-sv-close').onclick = () => { box.hidden = true; };
+    box.querySelectorAll('[data-sv]').forEach(b => { b.onclick = () => svAction(b.dataset.sv, b); });
+    box.querySelectorAll('.cart-sv-import input').forEach(inp => { inp.onchange = () => svImport(inp); });
+    if (nameConfirm) {
+      const inp = box.querySelector(`.cart-sv-save[data-kind="${nameConfirm.kind}"] .cart-sv-name`);
+      if (inp) inp.value = nameConfirm.name;
+    }
+  }
+  // The panel follows the mode and the page on screen (each mode has its own saves).
+  function svFollow() {
+    const box = $('.cart-saves');
+    if (!box || box.hidden || !DOC) return;
+    const sig = DOC.mode + '|' + DOC.page;
+    if (SV.sig === sig) return;
+    const first = SV.sig == null;
+    SV.sig = sig;
+    if (!first) { SV.confirm = null; svRefresh(); }
+  }
+  function svFind(id) {
+    for (const k in SV.lists) { const s = (SV.lists[k] || []).find(x => x.id === +id); if (s) return s; }
+    return null;
+  }
+  async function svAction(what, b) {
+    if (what === 'no') { SV.confirm = null; return svPaint(); }
+    if (what === 'yes') { const c = SV.confirm; SV.confirm = null; svPaint(); return c && c.run(); }
+    if (what === 'save') {
+      const kind = b.dataset.kind;
+      const name = (b.parentElement.querySelector('.cart-sv-name').value || '').trim();
+      if (!name) { TOAST(T('err_bad_name', 'Nom invalide (1 à 60 caractères)'), 'warning'); return; }
+      return svSave(kind, name, false);
+    }
+    if (what === 'export_all') return svExport(b.dataset.kind, null);
+    const sv = svFind(b.dataset.id);
+    if (!sv) return;
+    if (what === 'export') return svExport(sv.kind, sv);
+    if (what === 'delete') {
+      SV.confirm = {id: sv.id, text: T('sv_confirm_delete', 'Supprimer « {n} » de la bibliothèque commune ?').replace('{n}', sv.name),
+                    yes: T('delete', 'Supprimer'), run: () => svDelete(sv)};
+      return svPaint();
+    }
+    if (what === 'recall' || what === 'add') {
+      const pg = curPage();
+      const pgName = pg.name || T('page_n', 'Page {n}').replace('{n}', DOC.pages.indexOf(pg) + 1);
+      const text = sv.kind === 'grid' ? T('sv_confirm_grid', 'Remplacer toute la grille par « {n} » ? Ce qui joue continue.')
+        : sv.kind === 'playlist' ? T('sv_confirm_playlist', 'Remplacer la playlist par « {n} » ? Ce qui joue continue.')
+        : what === 'add' ? T('sv_confirm_add', 'Ajouter « {n} » comme nouvelle page ?')
+        : T('sv_confirm_page', 'Remplacer la page « {p} » par « {n} » ? Ce qui joue continue.').replace('{p}', pgName);
+      const body = sv.kind === 'page' ? (what === 'add' ? {add: true} : {page: pg.id}) : {};
+      SV.confirm = {id: sv.id, text: text.replace('{n}', sv.name), yes: T('sv_recall', 'Rappeler'), run: () => svRecall(sv, body)};
+      return svPaint();
+    }
+  }
+  async function svSave(kind, name, overwrite) {
+    const body = {kind, name, overwrite};
+    if (kind === 'page') body.page = curPage().id;
+    const res = await svJson('POST', '/api/containers/' + VMID + '/library', body);
+    if (res.status === 409 && res.data.error === 'name_taken' && !overwrite) {
+      SV.confirm = {kind, name, overwrite: true, yes: T('sv_replace', 'Remplacer'),
+                    text: T('sv_confirm_overwrite', '« {n} » existe déjà : le remplacer ?').replace('{n}', name),
+                    run: () => svSave(kind, name, true)};
+      return svPaint();
+    }
+    if (!res.ok) { TOAST(svErr(res), 'error'); return; }
+    TOAST(T('sv_saved', 'Enregistré : {n}').replace('{n}', name), 'success');
+    await svLoad(kind); svPaint();
+  }
+  async function svDelete(sv) {
+    const res = await svFetch('/api/plugins/' + LIB_T + '/library/' + sv.id, {method: 'DELETE'});
+    if (!res.ok) { TOAST(svErr(res), 'error'); return; }
+    await svLoad(sv.kind); svPaint();
+  }
+  function missingHtml(list, count) {
+    if (!count) return '';
+    const names = (list || []).slice(0, 12).map(m => esc(m.title || mediaName(baseName(m.file)) || m.asset || '?')).join(', ');
+    return `<p class="cart-sv-miss">${esc(T('sv_missing_report', '{n} son(s) introuvable(s) — touches gardées, son marqué manquant :').replace('{n}', count))} ${names}${count > 12 ? ' …' : ''}</p>`;
+  }
+  async function svRecall(sv, body) {
+    const res = await svJson('POST', '/api/containers/' + VMID + '/library/' + sv.id + '/recall', body);
+    if (!res.ok) { TOAST(svErr(res), 'error'); return; }
+    const r = res.data.recall || {};
+    const lines = [esc(T('sv_recalled', 'Rappelé : {n}').replace('{n}', sv.name))];
+    if (r.relocated) lines.push(esc(T('sv_relocated', '{n} touche(s) déplacée(s) pour tenir dans la grille').replace('{n}', r.relocated)));
+    if (r.hidden) lines.push(esc(T('sv_hidden', '{n} touche(s) hors de la grille actuelle').replace('{n}', r.hidden)));
+    SV.report = `<p>${lines.join(' · ')}</p>` + missingHtml(r.missing, r.missing_count);
+    DOC_REV = -1;                      // the next poll fetches the recalled document
+    await poll();
+    svPaint();
+  }
+  async function svExport(kind, sv) {
+    let url = '/api/plugins/' + LIB_T + '/presets-export?kind=' + encodeURIComponent(kind);
+    if (sv) url += '&id=' + sv.id;
+    const res = await svFetch(url);
+    if (!res.status || res.status >= 400) { TOAST(svErr(res), 'error'); return; }
+    const blob = new Blob([JSON.stringify(res.data, null, 2)], {type: 'application/json'});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'cartouchier-' + kind + '-' + (sv ? sv.name : 'all').replace(/[^\w.-]+/g, '_') + '.json';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  }
+  async function svImport(inp) {
+    const f = inp.files && inp.files[0];
+    if (!f) return;
+    let doc;
+    try { doc = JSON.parse(await f.text()); } catch (e) { TOAST(T('err_bad_file', 'Fichier illisible (JSON attendu)'), 'error'); return; }
+    const ow = inp.closest('.cart-form-acts').querySelector('.cart-sv-overwrite');
+    const res = await svJson('POST', '/api/plugins/' + LIB_T + '/presets-import',
+                             {document: doc, mode: ow && ow.checked ? 'overwrite' : 'skip'});
+    inp.value = '';
+    if (!res.ok) { TOAST(res.data.error && typeof res.data.error === 'string' && /^[a-z_]+$/.test(res.data.error) ? svErr(res) : T('err_bad_file', 'Fichier illisible (JSON attendu)'), 'error'); return; }
+    const c = res.data.counts || {};
+    let html = `<p>${esc(T('sv_import_report', 'Import : {i} importée(s), {s} ignorée(s) (nom déjà pris), {r} refusée(s).')
+      .replace('{i}', c.imported || 0).replace('{s}', c.skipped || 0).replace('{r}', c.rejected || 0))}</p>`;
+    (res.data.rejected || []).forEach(x => {
+      html += `<p class="cart-note">${esc(x.name || ('#' + x.index))} : ${esc(T('err_' + x.reason, x.reason))}</p>`;
+    });
+    (res.data.missing_media || []).forEach(m => {
+      html += `<p><strong>${esc(m.name)}</strong></p>` + missingHtml(m.media, m.count);
+    });
+    SV.report = html;
+    await svRefresh();
+  }
+
   // ── main render + poll ──
   function renderMain() {
     if (!EL || !DOC) return;
     renderBar();
     const host = $('.cart-main');
     if (DOC.mode === 'playlist') renderPlaylist(host); else renderGrid(host);
+    svFollow();
     if (!raf) raf = requestAnimationFrame(frame);
   }
 

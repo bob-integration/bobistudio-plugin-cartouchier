@@ -125,6 +125,25 @@ console's cart panel). The orchestrator ties flow and producer by the names of `
 the endpoint once per producer (≈ 0.5 s cache) and serves the console
 `GET /api/console-zones/<vmid>/sources`.
 
+## Saves: save, recall, export, import
+
+**Saves** button (top bar): the panel follows the mode on screen.
+
+- **Grid**: the whole grid (size, pages, keys, page defaults). **Playlist**: its items and options (A/B, auto
+  chaining, loop). **Page**: the page on screen alone — recalled *here* (replaces the page on screen) or *as a new
+  page*, on this cart or another. Each key keeps its row and column; one that does not fit takes the first free
+  slot (the report says so).
+- **Shared library** of the whole installation: a save made here is recallable from any cart. List with date and
+  author; **Export** gives a JSON file (one save, or a whole kind) that **Import** reads back on another
+  installation. A name is unique per kind.
+- **Recall without a cut**: whatever plays goes on to its end or until stopped; only the keys (or the playlist)
+  change. A confirmation shows in the page before anything is replaced.
+- **Media**: designated by their identity in the media base. On import an unknown media is reported; on recall a
+  sound missing on the node is listed, the key stays, marked "missing".
+- **Rights**: list and export with the login; save, delete, import and recall with `plugins.operate` — the presets'.
+- **Macros**: "Recall a grid", "Recall a playlist", "Recall a page into a page" (target page of your choice, empty =
+  page on screen, or add a page).
+
 ## Macros and external control
 
 Actions: press / stop a key (live list of keys), stop all (fades) / cut all, go to a page, next /

@@ -1192,3 +1192,209 @@ class CartEngine:
                 raise EngineError("bad_op", 400, op=op)
             doc = copy.deepcopy(self._commit(d))
             return dict(doc, added=added) if added else doc
+
+    # ── SAVE / RECALL (0.1.3) ────────────────────────────────────────────────────────────────
+    # A save is ONE of three kinds, each saved and recalled on its own (operator decision
+    # 2026-10-17): the whole GRID (grid size, every page with its keys and its page defaults),
+    # the PLAYLIST (items and their options), or ONE PAGE. The library itself lives in the
+    # orchestrator (plugin_store, `control.recall` of the manifest); the container only captures
+    # and applies. Recalling never cuts what plays: a player holds a COPY of its key, so the
+    # document can change under it. What must not happen is a NEW key or item taking the id of
+    # a sound still playing (a press would then act on the old sound): those ids are renamed.
+    def capture(self, kind, page=None):
+        """The payload of a save of `kind` ("grid" | "playlist" | "page"), with its summary."""
+        with self.lock:
+            d = copy.deepcopy(self.doc)
+            if kind == "grid":
+                payload = {"grid": d["grid"], "page": d["page"],
+                           "pages": [{f: p.get(f) for f in ("id", "name", "keys", "defaults")}
+                                     for p in d["pages"]]}
+                medias = [k["media"] for p in d["pages"] for k in p["keys"]]
+                summary = {"pages": len(d["pages"]), "keys": len(medias)}
+            elif kind == "playlist":
+                pl = d["playlist"]
+                payload = {f: pl[f] for f in ("items", "ab", "ab_players", "auto", "loop")}
+                medias = [it["media"] for it in pl["items"]]
+                summary = {"items": len(medias)}
+            elif kind == "page":
+                pg = self._page(d, self._page_ref(d, page))
+                payload = {"grid": d["grid"],
+                           "page": {f: pg.get(f) for f in ("id", "name", "keys", "defaults")}}
+                medias = [k["media"] for k in pg["keys"]]
+                summary = {"keys": len(medias), "page_name": pg["name"]}
+            else:
+                raise EngineError("bad_kind", 400, kind=kind)
+            summary["media"] = len([m for m in medias if _media_set(m)])
+            return {"kind": kind, "payload": payload, "summary": summary}
+
+    def _page_ref(self, d, page):
+        """A page designated by id, by 1-based number, or nothing (= the page on screen)."""
+        if page in (None, ""):
+            return d["page"]
+        ids = [p["id"] for p in d["pages"]]
+        if page in ids:
+            return page
+        try:
+            i = int(page)
+        except (TypeError, ValueError):
+            raise EngineError("unknown_page", 404, page=page)
+        if not 1 <= i <= len(ids):
+            raise EngineError("unknown_page", 404, page=page)
+        return ids[i - 1]
+
+    def _renamer(self, d, taken, origin):
+        """Id assignment for recalled elements. An id stays when nothing else holds it; else a new
+        one. A key (or item) whose id is held by a PLAYING player stays only if it is the same
+        sound (same media): pressing it then acts on that sound, which is what the operator sees."""
+        held = {p.item["id"]: normalize_media(p.item.get("media"))
+                for p in self.players if p.busy() and p.item and p.origin == origin}
+        all_ids = taken | set(held)
+
+        def fresh(prefix):
+            while True:
+                d["seq"] += 1
+                c = "%s%d" % (prefix, d["seq"])
+                if c not in all_ids:
+                    all_ids.add(c)
+                    return c
+
+        def assign(prefix, cur, media=None):
+            cur = _text(cur, 32)
+            if cur and cur not in taken and (cur not in held or (media is not None and
+                                                                 held[cur] == normalize_media(media))):
+                taken.add(cur)
+                all_ids.add(cur)
+                return cur
+            c = fresh(prefix)
+            taken.add(c)
+            return c
+        return assign
+
+    @staticmethod
+    def _remap_slots(keys, src_grid, dst_grid):
+        """A page saved on a src_cols x src_rows grid, laid on dst: each key keeps its ROW and
+        COLUMN when they exist; the others take the first free slot of the grid; beyond a full
+        grid they are kept (as after a grid resize) and counted as hidden."""
+        sc = _num((src_grid or {}).get("cols", dst_grid["cols"]), 1, MAX_COLS, dst_grid["cols"], int)
+        dc_, dr = dst_grid["cols"], dst_grid["rows"]
+        placed, rest, used = [], [], set()
+        for k in keys:
+            r, c = divmod(_num(k.get("slot", 0), 0, MAX_COLS * MAX_ROWS - 1, 0, int), sc)
+            s = r * dc_ + c
+            if c < dc_ and r < dr and s not in used:
+                k["slot"] = s
+                used.add(s)
+                placed.append(k)
+            else:
+                rest.append(k)
+        relocated = hidden = 0
+        for k in rest:
+            s = next((i for i in range(MAX_COLS * MAX_ROWS) if i not in used), None)
+            if s is None:
+                break
+            used.add(s)
+            k["slot"] = s
+            placed.append(k)
+            if s < dc_ * dr:
+                relocated += 1
+            else:
+                hidden += 1
+        return placed, relocated, hidden
+
+    def recall(self, kind, payload, page=None, add=False):
+        """Apply a save. `page` (kind "page"): the page REPLACED (id, 1-based number, or the page
+        on screen); `add`: appended as a new page instead. Returns the canonical doc and a report
+        {kind, page, renamed, relocated, hidden}. Nothing that plays is touched."""
+        with self.lock:
+            payload = payload if isinstance(payload, dict) else {}
+            d = copy.deepcopy(self.doc)
+            report = {"kind": kind, "renamed": 0, "relocated": 0, "hidden": 0}
+
+            def keys_of(src_keys, assign, kmap):
+                out = []
+                for k in src_keys if isinstance(src_keys, list) else []:
+                    if not isinstance(k, dict):
+                        continue
+                    k = copy.deepcopy(k)
+                    nid = assign("k", k.get("id"), k.get("media"))
+                    if nid != k.get("id"):
+                        report["renamed"] += 1
+                    kmap[k.get("id")] = nid
+                    k["id"] = nid
+                    out.append(k)
+                return out
+
+            def relink(keys, kmap):
+                for k in keys:
+                    k["next"] = kmap.get(k.get("next"), "") if k.get("next") else ""
+
+            if kind == "grid":
+                src_pages = [p for p in (payload.get("pages") or []) if isinstance(p, dict)][:MAX_PAGES]
+                if not src_pages:
+                    raise EngineError("empty_save", 400, kind=kind)
+                taken = {it["id"] for it in d["playlist"]["items"]}
+                assign = self._renamer(d, taken, "grid")
+                kmap, pages = {}, []
+                for p in src_pages:
+                    pages.append({"id": assign("p", p.get("id")), "name": p.get("name"),
+                                  "defaults": p.get("defaults"), "keys": keys_of(p.get("keys"), assign, kmap)})
+                for p in pages:
+                    relink(p["keys"], kmap)
+                g = payload.get("grid") if isinstance(payload.get("grid"), dict) else {}
+                d["grid"] = {"cols": g.get("cols", d["grid"]["cols"]), "rows": g.get("rows", d["grid"]["rows"])}
+                d["pages"] = pages
+                first = next((p["id"] for p, s in zip(pages, src_pages) if s.get("id") == payload.get("page")),
+                             pages[0]["id"])
+                d["page"] = first
+                report["page"] = first
+            elif kind == "playlist":
+                src_items = [it for it in (payload.get("items") or []) if isinstance(it, dict)][:MAX_ITEMS]
+                taken = {p["id"] for p in d["pages"]} | {k["id"] for p in d["pages"] for k in p["keys"]}
+                assign = self._renamer(d, taken, "playlist")
+                items = []
+                for it in src_items:
+                    it = copy.deepcopy(it)
+                    nid = assign("i", it.get("id"), it.get("media"))
+                    if nid != it.get("id"):
+                        report["renamed"] += 1
+                    it["id"] = nid
+                    items.append(it)
+                pl = d["playlist"]
+                pl["items"] = items
+                for f in ("ab", "ab_players", "auto", "loop"):
+                    if f in payload:
+                        pl[f] = payload[f]
+                # The new list starts at its top: a "ready" id of the old list means nothing here.
+                # What is on air goes on to its end; the next GO fades it as usual.
+                self.pl_ready = None
+                self.pl_on_air = None
+            elif kind == "page":
+                src = payload.get("page") if isinstance(payload.get("page"), dict) else None
+                if src is None:
+                    raise EngineError("empty_save", 400, kind=kind)
+                if add:
+                    if len(d["pages"]) >= MAX_PAGES:
+                        raise EngineError("too_many_pages", 409)
+                    target = {"id": _next_id(d, "p"), "name": "", "keys": [], "defaults": {}}
+                    d["pages"].append(target)
+                else:
+                    target = self._page(d, self._page_ref(d, page))
+                taken = {p["id"] for p in d["pages"]} | {it["id"] for it in d["playlist"]["items"]} \
+                    | {k["id"] for p in d["pages"] if p is not target for k in p["keys"]}
+                assign = self._renamer(d, taken, "grid")
+                kmap = {}
+                keys = keys_of(src.get("keys"), assign, kmap)
+                relink(keys, kmap)
+                keys, report["relocated"], report["hidden"] = self._remap_slots(
+                    keys, payload.get("grid"), d["grid"])
+                target["keys"] = keys
+                target["defaults"] = src.get("defaults") or {}
+                if _text(src.get("name"), 40):
+                    target["name"] = src.get("name")
+                d["page"] = target["id"]
+                report["page"] = target["id"]
+            else:
+                raise EngineError("bad_kind", 400, kind=kind)
+            doc = self._commit(d)
+            self._event("recalled", save_kind=kind)
+            return dict(copy.deepcopy(doc), recall=report)
