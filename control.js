@@ -320,6 +320,13 @@
     g.fillRect(xh, 0, 2, H);
   }
 
+  // Nom d'une page sans nom propre : son numéro de CRÉATION (id « p7 » → « Page 7 »), pas sa position — sinon
+  // déplacer une page la renommait d'après sa nouvelle place et le geste avait l'air d'un simple changement de page
+  function pageLabel(p, i) {
+    if (p && p.name) return p.name;
+    const m = /(\d+)$/.exec((p && p.id) || '');
+    return T('page_n', 'Page {n}').replace('{n}', m ? m[1] : i + 1);
+  }
   // ── bar (mode, pages) ──
   function renderBar() {
     if (!DOC) return;
@@ -327,7 +334,7 @@
     const host = $('.cart-pages');
     host.hidden = DOC.mode !== 'grid';
     host.innerHTML = DOC.pages.map((p, i) => `<button type="button" role="tab" class="cart-btn cart-page${p.id === DOC.page ? ' is-on' : ''}"
-       data-page="${esc(p.id)}" aria-selected="${p.id === DOC.page}">${esc(p.name || T('page_n', 'Page {n}').replace('{n}', i + 1))}</button>`).join('');
+       data-page="${esc(p.id)}" aria-selected="${p.id === DOC.page}">${esc(pageLabel(p, i))}</button>`).join('');
     host.querySelectorAll('[data-page]').forEach(b => { b.onclick = () => post('/page', {page: b.dataset.page}); });
   }
 
@@ -733,7 +740,7 @@
     const pg = DOC.pages.find(p => p.id === pageId) || curPage();
     const media = key && S && S.key_media ? (S.key_media[key.id] || {}) : {};
     const keys = DOC.pages.flatMap((p, i) => p.keys.filter(x => !key || x.id !== key.id).map(x =>
-      ({id: x.id, label: (p.name || T('page_n', 'Page {n}').replace('{n}', i + 1)) + ' · ' + (x.title || x.id)})));
+      ({id: x.id, label: pageLabel(p, i) + ' · ' + (x.title || x.id)})));
     const nPl = (S && S.n_players) || 2;
     const inh = effectiveOf({}, pg.defaults, DOC.defaults);
     const from = f => ((pg.defaults || {})[f] != null ? T('inh_page', 'Défaut de la page ({v})') : T('inh_cart', 'Défaut du cartouchier ({v})'));
@@ -938,7 +945,7 @@
     if (!box.hidden) { box.hidden = true; return; }
     const s = DOC.settings, pg = curPage(), dfl = Object.assign({}, DEFAULTS0, DOC.defaults || {});
     const nPl = (S && S.n_players) || 2;
-    const pgName = pg.name || T('page_n', 'Page {n}').replace('{n}', DOC.pages.indexOf(pg) + 1);
+    const pgName = pageLabel(pg, DOC.pages.indexOf(pg));
     box.hidden = false;
     box.innerHTML = `
       <div class="cart-panel-head"><strong>${esc(T('settings', 'Réglages'))}</strong>
@@ -976,7 +983,7 @@
         ${field(T('page_name', 'Nom de la page affichée'), `<input type="text" name="page_name" maxlength="40" value="${esc(pg.name)}" placeholder="${esc(pgName)}">`)}
       </div>
       <p class="cart-note">${esc(T('pages_here', 'Pages ({n}) — la page en surbrillance est celle affichée ; touchez-en une pour l\'afficher :').replace('{n}', DOC.pages.length))}</p>
-      <div class="cart-pages cart-pages-set" role="tablist">${DOC.pages.map((p2, i) => `<button type="button" role="tab" class="cart-btn cart-page${p2.id === DOC.page ? ' is-on' : ''}" data-spage="${esc(p2.id)}" aria-selected="${p2.id === DOC.page}">${esc(p2.name || T('page_n', 'Page {n}').replace('{n}', i + 1))}</button>`).join('')}</div>
+      <div class="cart-pages cart-pages-set" role="tablist">${DOC.pages.map((p2, i) => `<button type="button" role="tab" class="cart-btn cart-page${p2.id === DOC.page ? ' is-on' : ''}" data-spage="${esc(p2.id)}" aria-selected="${p2.id === DOC.page}">${esc(pageLabel(p2, i))}</button>`).join('')}</div>
       <div class="cart-form-acts">
         <button type="button" class="cart-btn cart-pg-add">${esc(T('page_add', 'Ajouter une page'))}</button>
         <button type="button" class="cart-btn" data-pmove="-1">${esc(T('page_move_left', '← Déplacer la page'))}</button>
