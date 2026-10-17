@@ -1,0 +1,560 @@
+{
+  "license": "GPL-3.0-or-later",
+  "type": "cartouchier",
+  "label": "Cartouchier",
+  "runtime": "docker",
+  "image": "media",
+  "media_volume": true,
+  "state_volume": true,
+  "version": "0.1.0",
+  "description": "Cartouchier : touches sonores en grille à pages ou en playlist A/B, sur N lecteurs stéréo (un flux MXL audio chacun). Boucle, enchaînement, exclusivité, fondu d'arrêt, deuxième appui réglable, normalisation EBU R128 au chargement, décompte, forme d'onde, intro / fin. Publie l'état de chaque flux (GET /flows) pour la console.",
+  "badge": {
+    "label": "Cart",
+    "class": "mode-cart",
+    "oklch": "0.78 0.06 40"
+  },
+  "video_format": false,
+  "script_template": "script.py",
+  "files": [
+    {
+      "src": "src/__init__.py",
+      "dest": "cart/__init__.py"
+    },
+    {
+      "src": "src/engine.py",
+      "dest": "cart/engine.py"
+    },
+    {
+      "src": "src/loudness.py",
+      "dest": "cart/loudness.py"
+    },
+    {
+      "src": "src/media.py",
+      "dest": "cart/media.py"
+    }
+  ],
+  "nav": {
+    "section": "medias",
+    "label": "Medias",
+    "route": "/medias",
+    "order": 12
+  },
+  "ui": {
+    "control_html": "control.html",
+    "control_js": "control.js",
+    "control_css": "control.css",
+    "public_page": true
+  },
+  "resources": {
+    "cores": 1,
+    "memory": 1024,
+    "pin": true
+  },
+  "deploy_defaults": {
+    "players": 2,
+    "media_root": "/mnt/media",
+    "log_level": "info",
+    "cache_max_mb": 4096,
+    "max_media_s": 1200
+  },
+  "config_schema": [
+    {
+      "key": "players",
+      "type": "number",
+      "label": "Lecteurs (flux stéréo)",
+      "min": 1,
+      "max": 8,
+      "default": 2,
+      "help": "Nombre de lecteurs, donc de flux MXL audio stéréo produits. Une touche lancée prend un lecteur libre, ou celui qui lui est affecté ; la playlist A/B en utilise deux. Changer ce nombre redéploie (les flux sont créés au démarrage)."
+    },
+    {
+      "key": "cache_max_mb",
+      "type": "number",
+      "label": "Cache des sons décodés (Mo)",
+      "min": 256,
+      "max": 65536,
+      "default": 4096,
+      "help": "Les sons sont décodés une fois (PCM 48 kHz stéréo, ≈ 23 Mo par minute) sur le volume d'état du conteneur et lus de là. Au-delà de ce plafond, les sons les plus anciennement utilisés et qu'aucune touche ne référence sont effacés."
+    },
+    {
+      "key": "max_media_s",
+      "type": "number",
+      "label": "Durée maximale d'un son (s)",
+      "min": 10,
+      "max": 7200,
+      "default": 1200,
+      "help": "Un média plus long est tronqué au décodage. Un cartouchier lit des sons courts : ce plafond évite qu'un film glissé par erreur sur une touche remplisse le disque."
+    },
+    {
+      "key": "log_level",
+      "type": "select",
+      "label": "Niveau de journal",
+      "default": "info",
+      "options": [
+        {
+          "value": "debug",
+          "label": "debug"
+        },
+        {
+          "value": "info",
+          "label": "info"
+        },
+        {
+          "value": "warning",
+          "label": "warning"
+        },
+        {
+          "value": "error",
+          "label": "error"
+        }
+      ]
+    }
+  ],
+  "wiring": {
+    "produces": [
+      {
+        "essence": "audio",
+        "repeat": "players",
+        "shm": "{hostname}_player_{i1}",
+        "label": "Lecteur {i1}",
+        "format": {
+          "sample_rate": 48000,
+          "bit_depth": 24,
+          "channels": 2
+        }
+      }
+    ],
+    "consumes": [],
+    "mode": "redeploy",
+    "state_endpoint": "/state"
+  },
+  "control": {
+    "endpoints": [
+      "/state",
+      "/doc",
+      "/flows",
+      "/keys",
+      "/pages",
+      "/players",
+      "/items",
+      "/waveform",
+      "/fire",
+      "/stop",
+      "/stop_all",
+      "/page",
+      "/pl/go",
+      "/pl/next",
+      "/pl/prev",
+      "/pl/goto",
+      "/pl/options",
+      "/player/play",
+      "/player/pause",
+      "/player/stop",
+      "/key",
+      "/pages",
+      "/grid",
+      "/mode",
+      "/playlist",
+      "/settings",
+      "/media/rescan"
+    ],
+    "read_endpoints": [
+      "/state",
+      "/doc",
+      "/flows",
+      "/keys",
+      "/pages",
+      "/players",
+      "/items",
+      "/waveform"
+    ],
+    "persist": {
+      "param": "cart",
+      "snapshot": "/doc",
+      "settings": [
+        "/key",
+        "/pages",
+        "/grid",
+        "/mode",
+        "/playlist",
+        "/settings",
+        "/page",
+        "/pl/options"
+      ]
+    }
+  },
+  "param_tree": {
+    "global_groups": [
+      {
+        "label": "Niveaux",
+        "endpoint": "/settings",
+        "path_prefix": "settings",
+        "fields": {
+          "normalize": {
+            "label": "Normalisation R128",
+            "type": "bool",
+            "default": true
+          },
+          "target_lufs": {
+            "label": "Cible (LUFS)",
+            "type": "number",
+            "min": -40,
+            "max": -5,
+            "step": 0.5,
+            "default": -23
+          },
+          "max_gain_db": {
+            "label": "Gain maximal de normalisation (dB)",
+            "type": "number",
+            "min": 0,
+            "max": 30,
+            "step": 0.5,
+            "default": 12
+          },
+          "alert_s": {
+            "label": "Seuil d'alerte du décompte (s)",
+            "type": "number",
+            "min": 0,
+            "max": 120,
+            "step": 1,
+            "default": 10
+          }
+        }
+      }
+    ]
+  },
+  "actions": [
+    {
+      "id": "fire",
+      "label": "Appuyer sur une touche (lancer, ou son deuxième appui)",
+      "endpoint": "/fire",
+      "params": [
+        {
+          "key": "key",
+          "label": "Touche",
+          "type": "text",
+          "options_endpoint": "/keys"
+        }
+      ]
+    },
+    {
+      "id": "stop",
+      "label": "Arrêter une touche (avec son fondu)",
+      "endpoint": "/stop",
+      "params": [
+        {
+          "key": "key",
+          "label": "Touche",
+          "type": "text",
+          "options_endpoint": "/keys"
+        }
+      ]
+    },
+    {
+      "id": "stop_all",
+      "label": "Tout arrêter (fondus)",
+      "endpoint": "/stop_all",
+      "body": {
+        "cut": false
+      },
+      "params": []
+    },
+    {
+      "id": "stop_all_cut",
+      "label": "Tout couper (sans fondu)",
+      "endpoint": "/stop_all",
+      "body": {
+        "cut": true
+      },
+      "params": []
+    },
+    {
+      "id": "page",
+      "label": "Aller à une page",
+      "endpoint": "/page",
+      "params": [
+        {
+          "key": "page",
+          "label": "Page",
+          "type": "text",
+          "options_endpoint": "/pages"
+        }
+      ]
+    },
+    {
+      "id": "page_next",
+      "label": "Page suivante",
+      "endpoint": "/page",
+      "body": {
+        "page": "next"
+      },
+      "params": []
+    },
+    {
+      "id": "page_prev",
+      "label": "Page précédente",
+      "endpoint": "/page",
+      "body": {
+        "page": "prev"
+      },
+      "params": []
+    },
+    {
+      "id": "pl_go",
+      "label": "Playlist : lancer l'élément prêt",
+      "endpoint": "/pl/go",
+      "params": []
+    },
+    {
+      "id": "pl_next",
+      "label": "Playlist : suivant",
+      "endpoint": "/pl/next",
+      "params": []
+    },
+    {
+      "id": "pl_prev",
+      "label": "Playlist : précédent",
+      "endpoint": "/pl/prev",
+      "params": []
+    },
+    {
+      "id": "pl_goto",
+      "label": "Playlist : préparer un élément",
+      "endpoint": "/pl/goto",
+      "params": [
+        {
+          "key": "index",
+          "label": "Élément",
+          "type": "number",
+          "default": 0,
+          "options_endpoint": "/items"
+        },
+        {
+          "key": "play",
+          "label": "Lancer aussitôt",
+          "type": "bool",
+          "default": false
+        }
+      ]
+    },
+    {
+      "id": "ab_on",
+      "label": "Playlist : mode A/B activé",
+      "endpoint": "/pl/options",
+      "body": {
+        "ab": true
+      },
+      "params": [],
+      "feedback": {
+        "state": "ab",
+        "value": true
+      }
+    },
+    {
+      "id": "ab_off",
+      "label": "Playlist : mode A/B désactivé",
+      "endpoint": "/pl/options",
+      "body": {
+        "ab": false
+      },
+      "params": [],
+      "feedback": {
+        "state": "ab",
+        "value": false
+      }
+    },
+    {
+      "id": "auto_on",
+      "label": "Playlist : enchaînement automatique activé",
+      "endpoint": "/pl/options",
+      "body": {
+        "auto": true
+      },
+      "params": []
+    },
+    {
+      "id": "auto_off",
+      "label": "Playlist : enchaînement automatique désactivé",
+      "endpoint": "/pl/options",
+      "body": {
+        "auto": false
+      },
+      "params": []
+    },
+    {
+      "id": "player_play",
+      "label": "Lecteur : lancer / reprendre",
+      "endpoint": "/player/play",
+      "params": [
+        {
+          "key": "player",
+          "label": "Lecteur",
+          "type": "number",
+          "default": 1,
+          "options_endpoint": "/players"
+        }
+      ]
+    },
+    {
+      "id": "player_pause",
+      "label": "Lecteur : pause / reprise",
+      "endpoint": "/player/pause",
+      "params": [
+        {
+          "key": "player",
+          "label": "Lecteur",
+          "type": "number",
+          "default": 1,
+          "options_endpoint": "/players"
+        }
+      ]
+    },
+    {
+      "id": "player_stop",
+      "label": "Lecteur : arrêter (avec le fondu)",
+      "endpoint": "/player/stop",
+      "params": [
+        {
+          "key": "player",
+          "label": "Lecteur",
+          "type": "number",
+          "default": 1,
+          "options_endpoint": "/players"
+        }
+      ]
+    },
+    {
+      "id": "mode_grid",
+      "label": "Mode grille",
+      "endpoint": "/mode",
+      "body": {
+        "mode": "grid"
+      },
+      "params": [],
+      "feedback": {
+        "state": "mode",
+        "value": "grid"
+      }
+    },
+    {
+      "id": "mode_playlist",
+      "label": "Mode playlist",
+      "endpoint": "/mode",
+      "body": {
+        "mode": "playlist"
+      },
+      "params": [],
+      "feedback": {
+        "state": "mode",
+        "value": "playlist"
+      }
+    }
+  ],
+  "state": [
+    {
+      "id": "playing_count",
+      "label": "Lecteurs en cours",
+      "endpoint": "/state",
+      "path": "playing_count",
+      "type": "number"
+    },
+    {
+      "id": "current_title",
+      "label": "Titre en cours",
+      "endpoint": "/state",
+      "path": "current_title",
+      "type": "text"
+    },
+    {
+      "id": "current_remaining_ms",
+      "label": "Temps restant du son en cours (ms)",
+      "endpoint": "/state",
+      "path": "current_remaining_ms",
+      "type": "number"
+    },
+    {
+      "id": "mode",
+      "label": "Mode (grid / playlist)",
+      "endpoint": "/state",
+      "path": "mode",
+      "type": "text"
+    },
+    {
+      "id": "page_index",
+      "label": "Page affichée (n°)",
+      "endpoint": "/state",
+      "path": "page_index",
+      "type": "number"
+    },
+    {
+      "id": "ab",
+      "label": "Playlist en mode A/B",
+      "endpoint": "/state",
+      "path": "playlist.ab",
+      "type": "bool"
+    },
+    {
+      "id": "on_air_index",
+      "label": "Playlist : élément à l'antenne (n°, base 0)",
+      "endpoint": "/state",
+      "path": "playlist.on_air_index",
+      "type": "number"
+    },
+    {
+      "id": "on_air_title",
+      "label": "Playlist : titre à l'antenne",
+      "endpoint": "/state",
+      "path": "on_air_title",
+      "type": "text"
+    },
+    {
+      "id": "ready_index",
+      "label": "Playlist : élément prêt (n°, base 0)",
+      "endpoint": "/state",
+      "path": "playlist.ready_index",
+      "type": "number"
+    },
+    {
+      "id": "player1_state",
+      "label": "Lecteur 1 : état",
+      "endpoint": "/state",
+      "path": "players.0.state",
+      "type": "text"
+    },
+    {
+      "id": "player1_remaining_ms",
+      "label": "Lecteur 1 : temps restant (ms)",
+      "endpoint": "/state",
+      "path": "players.0.remaining_ms",
+      "type": "number"
+    },
+    {
+      "id": "player1_title",
+      "label": "Lecteur 1 : titre",
+      "endpoint": "/state",
+      "path": "players.0.title",
+      "type": "text"
+    },
+    {
+      "id": "player2_state",
+      "label": "Lecteur 2 : état",
+      "endpoint": "/state",
+      "path": "players.1.state",
+      "type": "text"
+    },
+    {
+      "id": "player2_remaining_ms",
+      "label": "Lecteur 2 : temps restant (ms)",
+      "endpoint": "/state",
+      "path": "players.1.remaining_ms",
+      "type": "number"
+    },
+    {
+      "id": "player2_title",
+      "label": "Lecteur 2 : titre",
+      "endpoint": "/state",
+      "path": "players.1.title",
+      "type": "text"
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "version": "0.1.0",
+  "date": "2026-10-17",
+  "changes": {
+    "Création du plugin — cartouchier (0.1.0)": [
+      "★ Plugin INDÉPENDANT de la console audio (décision de l'exploitant, docs/chantiers/CARTOUCHIER.md) : la gestion des médias reste hors du fil temps réel de la console, et un cartouchier peut alimenter plusieurs consoles, ou aucune.",
+      "Lecteurs : N flux MXL audio stéréo (`<hôte>_player_<n>`, 2 par défaut, réglable au déploiement), états idle / cued / playing / paused / fading. Un seul fil audio écrit tous les lecteurs par blocs de 1 ms à index EXPLICITE et CONTIGU, ancré une fois sur la grille TAI : les flux sont alignés à l'échantillon entre eux, et un lecteur libre écrit du silence (la tranche qu'il alimente ne voit jamais sa source disparaître).",
+      "Mode grille à pages (taille réglable, jusqu'à 12 × 12, 64 pages) et mode playlist avec A/B (A joue, B tient l'élément suivant prêt ; GO alterne) et enchaînement automatique facultatif.",
+      "Touche : média (identité de la base des médias + chemin en indice), titre, gain, groupe d'exclusivité, boucle, enchaînement sur une autre touche (sans trou, sur le même lecteur), fondu d'arrêt, deuxième appui (arrêt avec fondu / pause-reprise / relance), marqueurs intro et fin, lecteur affecté, couleur. Toute coupure est adoucie sur 5 ms : jamais de clic.",
+      "Médias : base des médias par le composant commun (rapatriement vérifié compris) et dépôt rapide d'un fichier depuis le poste (envoi par la machinerie commune, la touche est affectée à la fin). Décodage unique par ffmpeg vers un cache PCM sur le volume d'état, lu par memmap.",
+      "EBU R128 au chargement (BS.1770-4, numpy, vérifié contre ffmpeg ebur128), mis en cache par média ; normalisation vers une cible commune (−23 LUFS par défaut), gain de normalisation plafonné et borné par la crête, plus le gain par touche.",
+      "Interface : grille ou playlist, état des lecteurs, décompte au dixième (couleur d'alerte sous un seuil réglable), titre, forme d'onde pré-calculée avec tête de lecture, intro / fin avec leur propre décompte. Cibles de 44 px, aucun glisser HTML5 indispensable, page publique en lecture seule.",
+      "Cartouchier commun persisté par l'orchestrateur (`control.persist`, param `cart`) : il survit au redéploiement.",
+      "Publication PAR FLUX pour la console (phase 2) : `GET /flows` → {flux : {title, remaining_ms, elapsed_ms, duration_ms, intro_ms, outro_ms, state, player}} ; contrat documenté dans l'aide.",
+      "Macros : appuyer / arrêter une touche (liste vivante), tout arrêter, page, playlist GO / suivant / précédent / préparer, A/B, enchaînement auto, lecteur lancer / pause / arrêter, mode ; états lisibles (lecteurs, temps restant, titre en cours, élément à l'antenne). Réglages de niveau en param_tree."
+    ]
+  }
+}
