@@ -167,6 +167,8 @@
       "/defaults",
       "/assign",
       "/media/rescan",
+      "/capture",
+      "/recall",
       "/wave",
       "/montage/wave",
       "/montage/render",
@@ -187,6 +189,7 @@
       "/players",
       "/items",
       "/waveform",
+      "/capture",
       "/wave",
       "/montage/job"
     ],
@@ -203,8 +206,22 @@
         "/defaults",
         "/assign",
         "/page",
-        "/pl/options"
+        "/pl/options",
+        "/recall"
       ]
+    },
+    "recall": {
+      "source": "plugin_store",
+      "scope": "",
+      "endpoint": "/recall",
+      "capture": "/capture",
+      "apply": "post",
+      "kinds": [
+        "grid",
+        "playlist",
+        "page"
+      ],
+      "note": "Sauvegardes du cartouchier : bibliothèque COMMUNE à l'installation (plugin_store, portée globale), trois genres rangés dans value.kind (grille, playlist, page). Capture : GET /capture?kind=&page= ; rappel : POST /recall {kind, payload, name, page, add} — générique (`apply: post`, app/plugin_library.py), sans coupure de ce qui joue."
     },
     "streams": [
       {
@@ -523,6 +540,64 @@
         "state": "mode",
         "value": "playlist"
       }
+    },
+    {
+      "id": "recall_grid",
+      "label": "Rappeler une grille (sauvegarde)",
+      "core": "recall",
+      "recall_kind": "grid",
+      "params": [
+        {
+          "key": "memory",
+          "label": "Sauvegarde",
+          "type": "number",
+          "options_from": "recall"
+        }
+      ],
+      "help": "Ce qui joue continue jusqu'au bout ; seules les touches (ou la playlist) changent."
+    },
+    {
+      "id": "recall_playlist",
+      "label": "Rappeler une playlist (sauvegarde)",
+      "core": "recall",
+      "recall_kind": "playlist",
+      "params": [
+        {
+          "key": "memory",
+          "label": "Sauvegarde",
+          "type": "number",
+          "options_from": "recall"
+        }
+      ],
+      "help": "Ce qui joue continue jusqu'au bout ; seules les touches (ou la playlist) changent."
+    },
+    {
+      "id": "recall_page",
+      "label": "Rappeler une page (sauvegarde) dans une page",
+      "core": "recall",
+      "recall_kind": "page",
+      "params": [
+        {
+          "key": "memory",
+          "label": "Sauvegarde",
+          "type": "number",
+          "options_from": "recall"
+        },
+        {
+          "key": "page",
+          "label": "Page remplacée (vide = page affichée)",
+          "type": "text",
+          "optional": true,
+          "options_endpoint": "/pages"
+        },
+        {
+          "key": "add",
+          "label": "Ajouter comme nouvelle page",
+          "type": "bool",
+          "default": false
+        }
+      ],
+      "help": "Ce qui joue continue jusqu'au bout ; seules les touches (ou la playlist) changent."
     },
     {
       "id": "preview_key",

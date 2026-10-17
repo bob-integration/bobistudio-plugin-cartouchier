@@ -133,6 +133,27 @@ consommateur, le panneau cartouchier de la console). L'orchestrateur relie flux 
 noms de `wiring.produces`, lit l'endpoint une fois par producteur (cache ≈ 0,5 s) et sert à la console
 `GET /api/console-zones/<vmid>/sources`.
 
+## Sauvegardes : enregistrer, rappeler, exporter, importer
+
+Bouton **Sauvegardes** (barre du haut) : le panneau suit le mode affiché.
+
+- **Grille** : toute la grille (taille, pages, touches, défauts de page). **Playlist** : ses éléments et ses
+  options (A/B, enchaînement, boucle). **Page** : la page affichée seule — elle se rappelle *ici* (remplace la page
+  affichée) ou *comme nouvelle page*, dans ce cartouchier ou un autre. Chaque touche garde sa ligne et sa colonne ;
+  celle qui ne tient pas dans la grille prend le premier emplacement libre (le rapport le dit).
+- **Bibliothèque commune** à toute l'installation : une sauvegarde faite ici se rappelle depuis n'importe quel
+  cartouchier. Liste avec date et auteur ; **Exporter** donne un fichier JSON (une sauvegarde, ou tout un genre)
+  qu'**Importer** relit sur une autre installation. Un nom est unique par genre (« Matinale » peut être à la fois
+  une grille et une playlist).
+- **Rappel sans coupure** : ce qui joue continue jusqu'au bout ou jusqu'à son arrêt ; seules les touches (ou la
+  playlist) changent. Une confirmation s'affiche dans la page avant tout remplacement.
+- **Médias** : désignés par leur identité dans la base. À l'import, un média inconnu est signalé ; au rappel, un son
+  absent du nœud est listé et la touche reste, marquée « manquant ».
+- **Droits** : lister et exporter avec la seule connexion ; enregistrer, supprimer, importer et rappeler avec le
+  droit d'exploiter les plugins (`plugins.operate`) — les mêmes que les préréglages.
+- **Macros** : « Rappeler une grille », « Rappeler une playlist », « Rappeler une page dans une page » (page cible au
+  choix, vide = page affichée, ou ajout d'une page).
+
 ## Macros et pilotage externe
 
 Actions : appuyer sur / arrêter une touche (liste vivante des touches), tout arrêter (fondus) / tout

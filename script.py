@@ -492,6 +492,40 @@ def montage_job(jid):
     if not j:
         return 404, {{"ok": False, "error": "unknown_job"}}
     return 200, {{k: v for k, v in j.items() if k != "t"}}
+# ─── SAVE / RECALL (0.1.3) ─────────────────────────────────────────────────────────────────
+# The library of saves lives in the ORCHESTRATOR (plugin_store, manifest `control.recall`): it
+# captures here (GET /capture) and applies here (POST /recall, declared in control.persist.settings
+# so the recalled cart survives a redeploy). Medias are referenced by identity, as keys are: a save
+# imported from another installation may name sounds this node does not have — they are REPORTED
+# (the key is kept, its sound shows as missing), never a refusal.
+def _recalled_items(kind, doc, report):
+    if kind == "playlist":
+        return doc["playlist"]["items"]
+    if kind == "page":
+        return next((p["keys"] for p in doc["pages"] if p["id"] == report.get("page")), [])
+    return [k for p in doc["pages"] for k in p["keys"]]
+
+
+def recall(b):
+    kind = b.get("kind")
+    r = engine.recall(kind, b.get("payload"), page=b.get("page"), add=bool(b.get("add")))
+    report = r.pop("recall")
+    missing = []
+    for it in _recalled_items(kind, r, report):
+        m = it.get("media") or {{}}
+        if (m.get("asset") or m.get("file")) and not library.resolve(m):
+            missing.append({{"id": it["id"], "title": it.get("title") or "", "asset": m.get("asset"),
+                            "file": m.get("file") or ""}})
+    library.want(referenced_medias())
+    report["missing"] = missing[:100]
+    report["missing_count"] = len(missing)
+    report["name"] = _text_name(b.get("name"))
+    log("recall %s %r: %d renamed, %d media missing" % (kind, report["name"], report["renamed"], len(missing)))
+    return {{"doc": r, "recall": report}}
+
+
+def _text_name(v):
+    return str(v or "").strip()[:80]
 
 
 def _get(path, qs):
@@ -520,6 +554,11 @@ def _get(path, qs):
         return wave_source(qs)
     if path == "/montage/job":
         return montage_job((qs.get("id") or [""])[0])
+    if path == "/capture":
+        try:
+            return 200, engine.capture((qs.get("kind") or [""])[0], (qs.get("page") or [""])[0] or None)
+        except E.EngineError as ex:
+            return ex.status, {{"ok": False, "error": ex.code, "params": ex.params}}
     return 404, {{"error": "unknown"}}
 
 
@@ -581,6 +620,8 @@ def _post(path, b):
         return wave_montage(b)
     if path == "/montage/render":
         return montage_render(b)
+    if path == "/recall":
+        return recall(b)
     if path == "/media/rescan":
         with library.lock:
             library.asset_scan_t = 0.0
