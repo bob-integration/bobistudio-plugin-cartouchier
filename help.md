@@ -95,9 +95,16 @@ contract is specific to this plugin: the player or the recorder can publish the 
 | `elapsed_ms`, `remaining_ms`, `duration_ms` | position, time left, length of the sound |
 | `intro_ms`, `outro_ms` | markers, ms from the start of the sound; `0` = none |
 | `intro_remaining_ms`, `outro_remaining_ms` | optional: time until the marker while it is ahead, else `null` |
+| `alert_s` | optional: threshold (s) under which the countdown turns to the alert colour (producer setting) |
 
 Values are a snapshot: a consumer polling at a few hertz interpolates between two reads while
 `state` is `playing` or `fading`, and never while `paused`. Unknown fields must be ignored.
+
+The producer DECLARES it in its manifest: `control.flow_status: {"endpoint": "/flows", "panel": true}`
+(the endpoint is in `read_endpoints`; `panel`: its UI may be mounted in a consumer's panel — the
+console's cart panel). The orchestrator ties flow and producer by the names of `wiring.produces`, reads
+the endpoint once per producer (≈ 0.5 s cache) and serves the console
+`GET /api/console-zones/<vmid>/sources`.
 
 ## Macros and external control
 

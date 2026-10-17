@@ -1,7 +1,12 @@
 {
-  "version": "0.1.0",
+  "version": "0.1.1",
   "date": "2026-10-17",
   "changes": {
+    "Intégration dans la console (0.1.1)": [
+      "Manifeste : `control.flow_status: {endpoint: \"/flows\", panel: true}` — le cartouchier DÉCLARE qu'il publie l'état de ses flux ; l'orchestrateur valide la déclaration au scan et lit l'endpoint pour la console (décompte sur la tranche), une fois par producteur.",
+      "`GET /flows` publie aussi `alert_s` (seuil du décompte, réglage Niveaux) : la tranche de la console passe en couleur d'alerte au même seuil que le cartouchier.",
+      "`panel: true` : l'interface du cartouchier peut être montée dans le panneau cartouchier de la console (même contrat `mount(el, vmid, ctx)`)."
+    ],
     "Création du plugin — cartouchier (0.1.0)": [
       "★ Plugin INDÉPENDANT de la console audio (décision de l'exploitant, docs/chantiers/CARTOUCHIER.md) : la gestion des médias reste hors du fil temps réel de la console, et un cartouchier peut alimenter plusieurs consoles, ou aucune.",
       "Lecteurs : N flux MXL audio stéréo (`<hôte>_player_<n>`, 2 par défaut, réglable au déploiement), états idle / cued / playing / paused / fading. Un seul fil audio écrit tous les lecteurs par blocs de 1 ms à index EXPLICITE et CONTIGU, ancré une fois sur la grille TAI : les flux sont alignés à l'échantillon entre eux, et un lecteur libre écrit du silence (la tranche qu'il alimente ne voit jamais sa source disparaître).",

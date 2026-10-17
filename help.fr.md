@@ -101,10 +101,17 @@ compris** (un consommateur doit distinguer « libre » de « non publié ») :
 | `elapsed_ms`, `remaining_ms`, `duration_ms` | position, temps restant, durée du son |
 | `intro_ms`, `outro_ms` | marqueurs, en ms depuis le début du son ; `0` = aucun |
 | `intro_remaining_ms`, `outro_remaining_ms` | facultatifs : temps jusqu'au marqueur tant qu'il est devant, sinon `null` |
+| `alert_s` | facultatif : seuil (s) sous lequel le décompte passe en couleur d'alerte (réglage du producteur) |
 
 Les valeurs sont un instantané : un consommateur qui interroge à quelques hertz interpole entre
 deux lectures tant que `state` vaut `playing` ou `fading`, jamais en `paused`. Un champ inconnu
 doit être ignoré.
+
+Le producteur le DÉCLARE dans son manifeste : `control.flow_status: {"endpoint": "/flows", "panel": true}`
+(l'endpoint figure dans `read_endpoints` ; `panel` : son interface peut être montée dans le panneau d'un
+consommateur, le panneau cartouchier de la console). L'orchestrateur relie flux et producteur par les
+noms de `wiring.produces`, lit l'endpoint une fois par producteur (cache ≈ 0,5 s) et sert à la console
+`GET /api/console-zones/<vmid>/sources`.
 
 ## Macros et pilotage externe
 

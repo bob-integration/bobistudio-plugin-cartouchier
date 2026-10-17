@@ -809,10 +809,12 @@ class CartEngine:
         """The per-flow publication (phase 2 contract, see help.md). One entry per player flow,
         idle ones included: a consumer must be able to tell "idle" from "not published"."""
         out = {}
+        alert_s = self.doc.get("settings", {}).get("alert_s", 10)
         for v in self.players_view(flows):
             out[v["flow"]] = {k: v[k] for k in (
                 "title", "remaining_ms", "elapsed_ms", "duration_ms", "intro_ms", "outro_ms",
                 "state", "player", "intro_remaining_ms", "outro_remaining_ms")}
+            out[v["flow"]]["alert_s"] = alert_s      # the consumer's countdown turns to alert colour under it
         return out
 
     def playlist_view(self):
