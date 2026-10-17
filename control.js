@@ -1157,7 +1157,7 @@
     if (!box || box.hidden || !DOC) return;
     const op = canOperate();
     const pg = curPage();
-    const pgName = pg.name || T('page_n', 'Page {n}').replace('{n}', DOC.pages.indexOf(pg) + 1);
+    const pgName = pageLabel(pg, DOC.pages.indexOf(pg));
     const kinds = DOC.mode === 'playlist' ? ['playlist'] : ['grid', 'page'];
     const saveLbl = {grid: T('sv_save_grid', 'Enregistrer la grille sous…'),
                      playlist: T('sv_save_playlist', 'Enregistrer la playlist sous…'),
@@ -1249,7 +1249,7 @@
     }
     if (what === 'recall' || what === 'add') {
       const pg = curPage();
-      const pgName = pg.name || T('page_n', 'Page {n}').replace('{n}', DOC.pages.indexOf(pg) + 1);
+      const pgName = pageLabel(pg, DOC.pages.indexOf(pg));
       const text = sv.kind === 'grid' ? T('sv_confirm_grid', 'Remplacer toute la grille par « {n} » ? Ce qui joue continue.')
         : sv.kind === 'playlist' ? T('sv_confirm_playlist', 'Remplacer la playlist par « {n} » ? Ce qui joue continue.')
         : what === 'add' ? T('sv_confirm_add', 'Ajouter « {n} » comme nouvelle page ?')
