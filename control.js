@@ -919,6 +919,16 @@
   }
 
   // ── settings ──
+  // Réglages en SECTIONS encadrées (2026-10-17) : chaque titre ouvre un cadre qui garde ses champs ET son bouton
+  // Enregistrer — avec quatre boutons identiques dans une seule colonne, on ne voyait plus lequel valait pour quoi
+  function sectionize(box) {
+    let sec = null;
+    Array.from(box.children).forEach(el => {
+      if (el.classList.contains('cart-panel-head')) return;
+      if (el.matches('h3.cart-h')) { sec = document.createElement('section'); sec.className = 'cart-sec'; box.insertBefore(sec, el); }
+      if (sec) sec.appendChild(el);
+    });
+  }
   function openSettings() {
     const box = $('.cart-settings');
     if (!box.hidden) { box.hidden = true; return; }
@@ -937,7 +947,7 @@
         ${field(T('ceiling', 'Plafond de crête (dBFS)'), `<input type="number" name="peak_ceiling_db" step="0.5" min="-20" max="0" value="${s.peak_ceiling_db}">`)}
         ${field(T('alert', 'Alerte du décompte (s)'), `<input type="number" name="alert_s" step="1" min="0" max="120" value="${s.alert_s}">`)}
       </div>
-      <div class="cart-form-acts"><span class="cart-spacer"></span><button type="button" class="cart-btn cart-primary cart-st-save">${esc(T('save', 'Enregistrer'))}</button></div>
+      <div class="cart-form-acts"><span class="cart-spacer"></span><button type="button" class="cart-btn cart-primary cart-st-save">${esc(T('save_levels', 'Enregistrer les niveaux'))}</button></div>
 
       <h3 class="cart-h">${esc(T('sec_defaults', 'Défauts des touches'))}</h3>
       <p class="cart-note">${esc(T('defaults_help', 'Chaque touche hérite de ces réglages, sauf ceux qu\'elle personnalise. Les changer s\'applique à toutes les touches qui en héritent ; le fondu d\'arrêt, même à un son déjà lancé.'))}</p>
@@ -947,13 +957,13 @@
           : field(lbl(f), inputFor(f, dfl[f], nPl))).join('')}
         <label class="cart-field cart-field-sw"><span>${esc(T('dfl_auto', 'Enchaînement automatique (playlist)'))}</span><input type="checkbox" class="ctl-switch" name="pl_auto"${DOC.playlist.auto ? ' checked' : ''}></label>
       </div>
-      <div class="cart-form-acts"><span class="cart-spacer"></span><button type="button" class="cart-btn cart-primary cart-dfl-save">${esc(T('save', 'Enregistrer'))}</button></div>
+      <div class="cart-form-acts"><span class="cart-spacer"></span><button type="button" class="cart-btn cart-primary cart-dfl-save">${esc(T('save_defaults', 'Enregistrer les défauts'))}</button></div>
       <h3 class="cart-h">${esc(T('sec_page_defaults', 'Défauts de la page « {p} »').replace('{p}', pgName))}</h3>
       <p class="cart-note">${esc(T('page_defaults_help', 'Une page peut s\'écarter des défauts du cartouchier pour ses touches.'))}</p>
       <div class="cart-form cart-dfl-page">
         ${KEY_F.map(f => inhField(f, (pg.defaults || {})[f], dfl[f], T('inh_cart_same', 'Comme le cartouchier ({v})'), nPl)).join('')}
       </div>
-      <div class="cart-form-acts"><span class="cart-spacer"></span><button type="button" class="cart-btn cart-primary cart-pdfl-save">${esc(T('save', 'Enregistrer'))}</button></div>
+      <div class="cart-form-acts"><span class="cart-spacer"></span><button type="button" class="cart-btn cart-primary cart-pdfl-save">${esc(T('save_page_defaults', 'Enregistrer les défauts de la page'))}</button></div>
 
       <h3 class="cart-h">${esc(T('sec_grid', 'Grille et pages'))}</h3>
       <div class="cart-form">
@@ -967,12 +977,13 @@
         <button type="button" class="cart-btn" data-pmove="1" aria-label="${esc(T('move_right', 'Déplacer à droite'))}">→</button>
         <button type="button" class="cart-btn cart-danger cart-pg-del">${esc(T('page_delete', 'Supprimer la page'))}</button>
         <span class="cart-spacer"></span>
-        <button type="button" class="cart-btn cart-primary cart-grid-save">${esc(T('save', 'Enregistrer'))}</button>
+        <button type="button" class="cart-btn cart-primary cart-grid-save">${esc(T('save_grid', 'Enregistrer la grille'))}</button>
       </div>
 
       <h3 class="cart-h">${esc(T('sec_players', 'Lecteurs (sorties MXL)'))}</h3>
       <p class="cart-note">${esc(T('players_help', 'Chaque lecteur est une sortie audio stéréo sur le bus MXL. Changer leur nombre change les sorties et REDÉPLOIE le cartouchier : ce qui joue s\'arrête, et les câbles des lecteurs supprimés tombent.'))}</p>
       <div class="cart-players-set"></div>`;
+    sectionize(box);
     const v = n => box.querySelector(`[name="${n}"]`);
     wireInh(box.querySelector('.cart-dfl-page'));
     box.querySelector('.cart-st-close').onclick = () => { box.hidden = true; };
