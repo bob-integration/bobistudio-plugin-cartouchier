@@ -379,5 +379,6 @@
   "plugin.cartouchier.zone_none": "sans zone",
   "plugin.cartouchier.zone_players": "Lecteurs",
   "plugin.cartouchier.zone_playing": "en lecture",
-  "plugin.cartouchier.zones_dropped": "Seront supprimées avec leur contenu : {z}"
+  "plugin.cartouchier.zones_dropped": "Seront supprimées avec leur contenu : {z}",
+  "plugin.cartouchier.zone_none_hint": "Ce lecteur n'appartient à aucune zone : attribuez-le dans « Disposition de l'onglet… » (mode Édition)."
 }

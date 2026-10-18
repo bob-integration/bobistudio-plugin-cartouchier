@@ -161,7 +161,9 @@
 
 /* ── MONITORING (0.1.3): listening bar, pre-listen on a key ── */
 .cart-listen { display: inline-flex; flex-wrap: wrap; align-items: center; gap: var(--space-1); }
-.cart-listen select { min-height: 44px; max-width: 12rem; }
+.cart-listen select { min-height: 44px; max-width: 12rem; padding: 0 var(--space-2); border: 1px solid var(--border);
+  border-radius: var(--radius-small); background: var(--bg-input); color: var(--text); font: inherit; }   /* was the browser's white select on the dark theme */
+.cart-player-zone--none { color: var(--status-warning-fg); cursor: help; }
 .cart-lst-msg { font-size: .85em; color: var(--text-muted); max-width: 18rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cart-key-pfl { position: absolute; top: 0; right: 0; min-width: 44px; min-height: 44px; display: inline-flex;
                 align-items: center; justify-content: center; border-left: 1px solid var(--border);

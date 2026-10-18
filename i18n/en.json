@@ -379,5 +379,6 @@
   "plugin.cartouchier.zone_none": "no zone",
   "plugin.cartouchier.zone_players": "Players",
   "plugin.cartouchier.zone_playing": "playing",
-  "plugin.cartouchier.zones_dropped": "Will be deleted with their content: {z}"
+  "plugin.cartouchier.zones_dropped": "Will be deleted with their content: {z}",
+  "plugin.cartouchier.zone_none_hint": "This player belongs to no zone: assign it in “Tab layout…” (Edit mode)."
 }

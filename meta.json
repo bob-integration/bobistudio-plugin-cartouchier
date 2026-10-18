@@ -1,7 +1,11 @@
 {
-  "version": "0.1.8",
+  "version": "0.1.9",
   "date": "2026-10-18",
   "changes": {
+    "Finitions (0.1.9)": [
+      "Le menu de pré-écoute suit le thème (il restait blanc sur le thème sombre).",
+      "Un lecteur qui n'appartient à aucune zone est signalé « sans zone » en orange ; au survol, la marche à suivre (Disposition de l'onglet…, en Édition)."
+    ],
     "Onglets et zones (0.1.8)": [
       "★ Onglets : le cartouchier se range en onglets que l'on crée (« + Onglet », en Édition), nomme, déplace et supprime. Un point s'allume sur un onglet quand un de ses lecteurs joue ; les lecteurs d'un onglet caché continuent de jouer.",
       "★ Disposition par onglet : 1 zone, 2 côte à côte, 2 empilées, 1 + 2 ; les zones côte à côte s'empilent sur écran étroit (téléphone, iPad en portrait). Chaque emplacement porte une ZONE : grille, playlist (un lecteur) ou playlist A/B (deux lecteurs, son propre passage A/B), avec sa propre grille (colonnes, rangées, pages, touches) ou sa propre playlist, et ses lecteurs. Un lecteur appartient à une seule zone.",

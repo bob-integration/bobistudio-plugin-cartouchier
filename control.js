@@ -339,7 +339,11 @@
       if (!card) return;
       card.dataset.state = p.state;
       const zv = zoneView(p.zone);
-      card.querySelector('.cart-player-zone').textContent = zv ? zv.label : T('zone_none', 'sans zone');
+      const zl = card.querySelector('.cart-player-zone');
+      zl.textContent = zv ? zv.label : T('zone_none', 'sans zone');
+      // a player added after the migration belongs to no zone: say where to give it one (2026-10-18)
+      zl.title = zv ? '' : T('zone_none_hint', 'Ce lecteur n\'appartient à aucune zone : attribuez-le dans « Disposition de l\'onglet… » (mode Édition).');
+      zl.classList.toggle('cart-player-zone--none', !zv);
       card.querySelector('.cart-state').textContent = T('st_' + p.state, p.state);
       card.querySelector('.cart-player-title').textContent = p.title || (p.state === 'idle' ? '' : (p.key || ''));
       const wk = p.player + '|' + (p.key || '');
