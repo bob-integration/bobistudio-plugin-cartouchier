@@ -6,7 +6,7 @@
   "image": "media",
   "media_volume": true,
   "state_volume": true,
-  "version": "0.1.7",
+  "version": "0.1.8",
   "description": "Cartouchier : touches sonores en grille à pages ou en playlist A/B, sur N lecteurs stéréo (un flux MXL audio chacun). Boucle, enchaînement, exclusivité, fondu d'arrêt, deuxième appui réglable, normalisation EBU R128 au chargement, décompte, forme d'onde, intro / fin. Publie l'état de chaque flux (GET /flows) pour la console.",
   "badge": {
     "label": "Cart",
@@ -174,7 +174,13 @@
       "/montage/render",
       "/montage/job",
       "/preview",
-      "/preview/stop"
+      "/preview/stop",
+      "/zones",
+      "/tabs",
+      "/tab",
+      "/layout",
+      "/zone",
+      "/set"
     ],
     "flow_status": {
       "endpoint": "/flows",
@@ -191,7 +197,9 @@
       "/waveform",
       "/capture",
       "/wave",
-      "/montage/job"
+      "/montage/job",
+      "/zones",
+      "/tabs"
     ],
     "persist": {
       "param": "cart",
@@ -207,7 +215,12 @@
         "/assign",
         "/page",
         "/pl/options",
-        "/recall"
+        "/recall",
+        "/tab",
+        "/tabs",
+        "/layout",
+        "/zone",
+        "/set"
       ]
     },
     "recall": {
@@ -221,7 +234,7 @@
         "playlist",
         "page"
       ],
-      "note": "Sauvegardes du cartouchier : bibliothèque COMMUNE à l'installation (plugin_store, portée globale), trois genres rangés dans value.kind (grille, playlist, page). Capture : GET /capture?kind=&page= ; rappel : POST /recall {kind, payload, name, page, add} — générique (`apply: post`, app/plugin_library.py), sans coupure de ce qui joue."
+      "note": "Sauvegardes du cartouchier : bibliothèque COMMUNE à l'installation (plugin_store, portée globale), trois genres rangés dans value.kind (grille, playlist, page). Capture : GET /capture?kind=&page=&zone= ; rappel : POST /recall {kind, payload, name, page, add, zone} (zone absente = zone par défaut du genre) — générique (`apply: post`, app/plugin_library.py), sans coupure de ce qui joue."
     },
     "streams": [
       {
@@ -230,6 +243,13 @@
         "perm": "read",
         "content_type": "audio/L16;rate=48000;channels=2"
       }
+    ],
+    "public_actions": [
+      "/fire",
+      "/stop",
+      "/pl/go",
+      "/player/play",
+      "/player/stop"
     ]
   },
   "param_tree": {
@@ -338,7 +358,58 @@
           }
         }
       }
-    ]
+    ],
+    "by_id": {
+      "document": "cart",
+      "catalog": "zones.json",
+      "set": {
+        "endpoint": "/set",
+        "path_key": "path",
+        "value_key": "value"
+      },
+      "read_endpoint": "/doc",
+      "roots": [
+        {
+          "list": "zones",
+          "kind": "zone",
+          "label": "Zone",
+          "label_field": "name",
+          "children": [
+            {
+              "object": "playlist",
+              "label": "Playlist",
+              "children": [
+                {
+                  "fields": {
+                    "ab_handover": {
+                      "field": "ab_handover",
+                      "label": "A/B : l'élément de l'autre lecteur au lancement (keep / cut / fade)",
+                      "always": true
+                    },
+                    "ab_handover_ms": {
+                      "field": "ab_handover_ms",
+                      "label": "A/B : durée du fondu de passage (ms)",
+                      "always": true
+                    },
+                    "auto": {
+                      "field": "auto",
+                      "label": "Enchaînement automatique",
+                      "always": true
+                    },
+                    "loop": {
+                      "field": "loop",
+                      "label": "Boucler la liste",
+                      "always": true
+                    }
+                  },
+                  "label": "Options"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
   },
   "actions": [
     {
@@ -374,7 +445,15 @@
       "body": {
         "cut": false
       },
-      "params": []
+      "params": [
+        {
+          "key": "zone",
+          "label": "Zone (vide = zone par défaut)",
+          "type": "text",
+          "optional": true,
+          "options_endpoint": "/zones"
+        }
+      ]
     },
     {
       "id": "stop_all_cut",
@@ -383,7 +462,15 @@
       "body": {
         "cut": true
       },
-      "params": []
+      "params": [
+        {
+          "key": "zone",
+          "label": "Zone (vide = zone par défaut)",
+          "type": "text",
+          "optional": true,
+          "options_endpoint": "/zones"
+        }
+      ]
     },
     {
       "id": "page",
@@ -395,6 +482,13 @@
           "label": "Page",
           "type": "text",
           "options_endpoint": "/pages"
+        },
+        {
+          "key": "zone",
+          "label": "Zone (vide = zone par défaut)",
+          "type": "text",
+          "optional": true,
+          "options_endpoint": "/zones"
         }
       ]
     },
@@ -405,7 +499,15 @@
       "body": {
         "page": "next"
       },
-      "params": []
+      "params": [
+        {
+          "key": "zone",
+          "label": "Zone (vide = zone par défaut)",
+          "type": "text",
+          "optional": true,
+          "options_endpoint": "/zones"
+        }
+      ]
     },
     {
       "id": "page_prev",
@@ -414,25 +516,57 @@
       "body": {
         "page": "prev"
       },
-      "params": []
+      "params": [
+        {
+          "key": "zone",
+          "label": "Zone (vide = zone par défaut)",
+          "type": "text",
+          "optional": true,
+          "options_endpoint": "/zones"
+        }
+      ]
     },
     {
       "id": "pl_go",
       "label": "Playlist : lancer l'élément prêt",
       "endpoint": "/pl/go",
-      "params": []
+      "params": [
+        {
+          "key": "zone",
+          "label": "Zone (vide = zone par défaut)",
+          "type": "text",
+          "optional": true,
+          "options_endpoint": "/zones"
+        }
+      ]
     },
     {
       "id": "pl_next",
       "label": "Playlist : suivant",
       "endpoint": "/pl/next",
-      "params": []
+      "params": [
+        {
+          "key": "zone",
+          "label": "Zone (vide = zone par défaut)",
+          "type": "text",
+          "optional": true,
+          "options_endpoint": "/zones"
+        }
+      ]
     },
     {
       "id": "pl_prev",
       "label": "Playlist : précédent",
       "endpoint": "/pl/prev",
-      "params": []
+      "params": [
+        {
+          "key": "zone",
+          "label": "Zone (vide = zone par défaut)",
+          "type": "text",
+          "optional": true,
+          "options_endpoint": "/zones"
+        }
+      ]
     },
     {
       "id": "pl_goto",
@@ -451,6 +585,13 @@
           "label": "Lancer aussitôt",
           "type": "bool",
           "default": false
+        },
+        {
+          "key": "zone",
+          "label": "Zone (vide = zone par défaut)",
+          "type": "text",
+          "optional": true,
+          "options_endpoint": "/zones"
         }
       ]
     },
@@ -461,7 +602,15 @@
       "body": {
         "ab": true
       },
-      "params": [],
+      "params": [
+        {
+          "key": "zone",
+          "label": "Zone (vide = zone par défaut)",
+          "type": "text",
+          "optional": true,
+          "options_endpoint": "/zones"
+        }
+      ],
       "feedback": {
         "state": "ab",
         "value": true
@@ -474,7 +623,15 @@
       "body": {
         "ab": false
       },
-      "params": [],
+      "params": [
+        {
+          "key": "zone",
+          "label": "Zone (vide = zone par défaut)",
+          "type": "text",
+          "optional": true,
+          "options_endpoint": "/zones"
+        }
+      ],
       "feedback": {
         "state": "ab",
         "value": false
@@ -487,7 +644,15 @@
       "body": {
         "auto": true
       },
-      "params": []
+      "params": [
+        {
+          "key": "zone",
+          "label": "Zone (vide = zone par défaut)",
+          "type": "text",
+          "optional": true,
+          "options_endpoint": "/zones"
+        }
+      ]
     },
     {
       "id": "auto_off",
@@ -496,7 +661,15 @@
       "body": {
         "auto": false
       },
-      "params": []
+      "params": [
+        {
+          "key": "zone",
+          "label": "Zone (vide = zone par défaut)",
+          "type": "text",
+          "optional": true,
+          "options_endpoint": "/zones"
+        }
+      ]
     },
     {
       "id": "player_play",
@@ -553,7 +726,15 @@
       "body": {
         "mode": "grid"
       },
-      "params": [],
+      "params": [
+        {
+          "key": "zone",
+          "label": "Zone (vide = zone par défaut)",
+          "type": "text",
+          "optional": true,
+          "options_endpoint": "/zones"
+        }
+      ],
       "feedback": {
         "state": "mode",
         "value": "grid"
@@ -566,7 +747,15 @@
       "body": {
         "mode": "playlist"
       },
-      "params": [],
+      "params": [
+        {
+          "key": "zone",
+          "label": "Zone (vide = zone par défaut)",
+          "type": "text",
+          "optional": true,
+          "options_endpoint": "/zones"
+        }
+      ],
       "feedback": {
         "state": "mode",
         "value": "playlist"
@@ -583,6 +772,13 @@
           "label": "Sauvegarde",
           "type": "number",
           "options_from": "recall"
+        },
+        {
+          "key": "zone",
+          "label": "Zone (vide = zone par défaut)",
+          "type": "text",
+          "optional": true,
+          "options_endpoint": "/zones"
         }
       ],
       "help": "Ce qui joue continue jusqu'au bout ; seules les touches (ou la playlist) changent."
@@ -598,6 +794,13 @@
           "label": "Sauvegarde",
           "type": "number",
           "options_from": "recall"
+        },
+        {
+          "key": "zone",
+          "label": "Zone (vide = zone par défaut)",
+          "type": "text",
+          "optional": true,
+          "options_endpoint": "/zones"
         }
       ],
       "help": "Ce qui joue continue jusqu'au bout ; seules les touches (ou la playlist) changent."
@@ -626,6 +829,13 @@
           "label": "Ajouter comme nouvelle page",
           "type": "bool",
           "default": false
+        },
+        {
+          "key": "zone",
+          "label": "Zone (vide = zone par défaut)",
+          "type": "text",
+          "optional": true,
+          "options_endpoint": "/zones"
         }
       ],
       "help": "Ce qui joue continue jusqu'au bout ; seules les touches (ou la playlist) changent."
@@ -648,6 +858,85 @@
       "label": "Arrêter la pré-écoute",
       "endpoint": "/preview/stop",
       "params": []
+    },
+    {
+      "id": "tab",
+      "label": "Afficher un onglet",
+      "endpoint": "/tab",
+      "params": [
+        {
+          "key": "tab",
+          "label": "Onglet",
+          "type": "text",
+          "options_endpoint": "/tabs"
+        }
+      ]
+    },
+    {
+      "id": "tab_next",
+      "label": "Onglet suivant",
+      "endpoint": "/tab",
+      "body": {
+        "tab": "next"
+      },
+      "params": []
+    },
+    {
+      "id": "tab_prev",
+      "label": "Onglet précédent",
+      "endpoint": "/tab",
+      "body": {
+        "tab": "prev"
+      },
+      "params": []
+    },
+    {
+      "id": "zone_grid",
+      "label": "Zone : passer en grille",
+      "endpoint": "/zone",
+      "body": {
+        "kind": "grid"
+      },
+      "params": [
+        {
+          "key": "zone",
+          "label": "Zone",
+          "type": "text",
+          "options_endpoint": "/zones"
+        }
+      ]
+    },
+    {
+      "id": "zone_playlist",
+      "label": "Zone : passer en playlist (un lecteur)",
+      "endpoint": "/zone",
+      "body": {
+        "kind": "playlist"
+      },
+      "params": [
+        {
+          "key": "zone",
+          "label": "Zone",
+          "type": "text",
+          "options_endpoint": "/zones"
+        }
+      ]
+    },
+    {
+      "id": "zone_playlist_ab",
+      "label": "Zone : passer en playlist A/B",
+      "endpoint": "/zone",
+      "body": {
+        "kind": "playlist_ab"
+      },
+      "params": [
+        {
+          "key": "zone",
+          "label": "Zone",
+          "type": "text",
+          "options_endpoint": "/zones"
+        }
+      ]
     }
   ],
   "state": [
@@ -674,7 +963,7 @@
     },
     {
       "id": "mode",
-      "label": "Mode (grid / playlist)",
+      "label": "Mode de la zone par défaut (grid / playlist)",
       "endpoint": "/state",
       "path": "mode",
       "type": "text"
@@ -783,6 +1072,20 @@
       "endpoint": "/state",
       "path": "preview.title",
       "type": "text"
+    },
+    {
+      "id": "tab",
+      "label": "Onglet affiché (id)",
+      "endpoint": "/state",
+      "path": "tab",
+      "type": "text"
+    },
+    {
+      "id": "tab_index",
+      "label": "Onglet affiché (n°)",
+      "endpoint": "/state",
+      "path": "tab_index",
+      "type": "number"
     }
   ]
 }

@@ -1,0 +1,29 @@
+{
+  "fields": {
+    "ab_handover": {
+      "type": "enum",
+      "options": [
+        "keep",
+        "cut",
+        "fade"
+      ],
+      "default": "keep"
+    },
+    "ab_handover_ms": {
+      "type": "int",
+      "min": 0,
+      "max": 30000,
+      "step": 100,
+      "unit": "ms",
+      "default": 1000
+    },
+    "auto": {
+      "type": "bool",
+      "default": false
+    },
+    "loop": {
+      "type": "bool",
+      "default": false
+    }
+  }
+}

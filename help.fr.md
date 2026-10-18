@@ -16,18 +16,52 @@ glisser a un équivalent en deux touchers.
 
 La **barre du haut** porte, de gauche à droite :
 
-- **Grille** / **Playlist** : le mode affiché ;
-- les **onglets de pages** (en mode Grille) : toucher un onglet affiche la page ;
+- les **onglets** du cartouchier (voir plus bas) ; un point s'allume sur un onglet quand un de ses
+  lecteurs joue, même s'il est caché ; en Édition, **+ Onglet** ;
+- **Disposition de l'onglet…** (en Édition seulement) ;
 - **Édition** : l'interrupteur qui sépare le jeu (toucher une touche la lance) de la préparation
   (toucher une touche l'ouvre) ;
 - **Sauvegardes**, **Réglages** ;
 - **🎧 Écoute**, avec la source écoutée ;
 - **Tout arrêter** : arrête tous les lecteurs, chacun avec son fondu.
 
-Sous la barre, une **carte par lecteur** ; puis la grille ou la playlist.
+Sous la barre, une **carte par lecteur** (numéro, zone, état) ; puis les zones de l'onglet affiché.
 
-Sur un lien public, la page est en lecture seule : on voit les lecteurs et les touches, on ne lance
-rien, et l'écoute n'est pas disponible.
+Sur un lien public, la page montre **un seul onglet** (celui du lien) : ses lecteurs, ses touches,
+sa playlist, en direct. Par défaut elle est en lecture seule ; si le lien a été créé avec
+« Autoriser à jouer cet onglet », on peut y lancer et arrêter les touches, faire GO et lancer ou
+arrêter les lecteurs de cet onglet — rien d'autre (ni édition, ni réglages). L'écoute n'y est pas
+disponible.
+
+## Onglets et zones
+
+Le cartouchier se range en **onglets** que l'on crée (**+ Onglet**, en Édition), nomme, déplace et
+supprime. Chaque onglet a une **disposition** : 1 zone, 2 côte à côte, 2 empilées, ou 1 + 2 (une en
+haut, deux dessous). Sur un écran étroit (téléphone, iPad en portrait), les zones côte à côte
+s'empilent.
+
+Chaque emplacement de la disposition porte une **zone**. Une zone a un nom, un contenu — **grille**,
+**playlist** (un lecteur à la fois) ou **playlist A/B** (deux lecteurs) — et ses **lecteurs**. Un
+lecteur appartient à une seule zone. Chaque zone a sa propre grille (colonnes, rangées, pages,
+touches) ou sa propre playlist (éléments, enchaînement, boucle, passage A/B). Exemple : un onglet
+« Plateau » avec deux grilles côte à côte, « Invité A » sur le lecteur 1 et « Invité B » sur le
+lecteur 2 ; un onglet « Antenne » avec les jingles sur le lecteur 5 au-dessus d'une playlist A/B sur
+les lecteurs 3 et 4.
+
+Les lecteurs d'un onglet caché **continuent de jouer** : un onglet n'est qu'une vue.
+
+**Disposition de l'onglet…** (Édition) : le nom de l'onglet, sa disposition, et pour chaque
+emplacement la zone (une de l'onglet, ou une nouvelle), son nom, son contenu et ses lecteurs. Un
+lecteur déjà pris par une zone d'un autre onglet est grisé (son propriétaire est indiqué) : on le
+libère d'abord là-bas. Une playlist A/B demande deux lecteurs (les deux premiers choisis). Les zones
+que l'onglet ne garde pas sont supprimées avec leur contenu — c'est dit avant d'appliquer. Ce qui
+joue continue.
+
+Les **Réglages** (grille et pages) et les **Sauvegardes** valent pour la **zone sélectionnée** : la
+dernière touchée, entourée.
+
+Un cartouchier d'avant les onglets s'ouvre tel quel : un onglet, une zone qui a tous les lecteurs,
+sa grille et sa playlist. Rien à refaire.
 
 ## Les lecteurs
 
@@ -369,6 +403,8 @@ Trois liens avec la console, sans changer de page :
 Actions :
 
 - appuyer sur une touche (lancer, ou son deuxième appui), arrêter une touche ;
+- afficher un onglet, onglet suivant, onglet précédent ; passer une zone en grille, playlist ou
+  playlist A/B ;
 - tout arrêter (fondus), tout couper (sans fondu) ;
 - aller à une page, page suivante, page précédente ;
 - playlist : GO, suivant, précédent, préparer un élément (et le lancer aussitôt) ;
@@ -379,15 +415,23 @@ Actions :
   ou ajout d'une page) ;
 - pré-écouter une touche, arrêter la pré-écoute.
 
-Les listes de touches, de pages, d'éléments et de sauvegardes sont vivantes.
+Les listes de touches, de pages, d'éléments, de zones, d'onglets et de sauvegardes sont vivantes.
+
+Les actions de playlist, de page, de mode, « tout arrêter » et les rappels prennent une **zone**
+facultative. Sans zone, elles visent la zone par défaut de leur genre : la première zone playlist
+(ou grille) dans l'ordre des onglets, sinon la première zone du premier onglet. Les macros, les
+pupitres et les liens de fader start écrits avant les onglets continuent donc d'agir comme avant ;
+les actions sur un lecteur (lancer, arrêter, « seulement si la lecture a eu lieu ») n'ont pas changé.
 
 États lisibles : lecteurs en cours ; titre et temps restant de ce qui joue ; mode ; page affichée ;
 A/B et le sort de l'autre lecteur au lancement (et la durée du fondu) ; élément à l'antenne (numéro et titre) et élément prêt ; état, temps restant et titre des
-lecteurs 1 et 2 ; état et titre de la pré-écoute.
+lecteurs 1 et 2 ; état et titre de la pré-écoute ; onglet affiché (id et numéro). Mode, page et
+playlist sont ceux des zones par défaut ; `/state.zones` et `/state.tabs` décrivent toutes les zones.
 
 Dans l'arbre de paramètres : les niveaux (normalisation, cible, gain maximal, seuil d'alerte), les
 défauts des touches et, pour la playlist A/B, le sort de l'autre lecteur au lancement et la durée
-de son fondu. Les surfaces matérielles et Ember+ passent par ces actions et ces états, comme
+de son fondu ; et, par zone (arbre par identifiant, stable quand on ajoute ou déplace des zones),
+le passage A/B, sa durée, l'enchaînement automatique et la boucle de la playlist. Les surfaces matérielles et Ember+ passent par ces actions et ces états, comme
 pour tout plugin.
 
 ## Pour les intégrateurs
@@ -456,8 +500,25 @@ lent perd son audio le plus ancien ; il ne ralentit jamais le fil audio.
 |---|---|
 | `POST /assign` | affecter un média à une touche (`page`, `slot`, `media`, `title`) ; persisté |
 | `POST /defaults` | défauts des touches du cartouchier, ou d'une page avec `page` ; lus dans `/state.defaults` |
-| `GET /capture?kind=&page=` | capture d'une grille, d'une playlist ou d'une page pour la bibliothèque |
-| `POST /recall` | rappel `{kind, payload, name, page, add}`, sans coupure ; persisté |
+| `GET /capture?kind=&page=&zone=` | capture d'une grille, d'une playlist ou d'une page (d'une zone) pour la bibliothèque |
+| `POST /recall` | rappel `{kind, payload, name, page, add, zone}`, sans coupure ; persisté |
+| `POST /tab` | onglet affiché : id, numéro, `next`, `prev` ; persisté |
+| `POST /tabs` | `{op: add, rename, delete, move}` ; persisté |
+| `POST /layout` | disposition d'un onglet `{tab, layout: 1, 2h, 2v, 1+2, slots: [{zone?, name, kind, players}]}`, refusée en entier si un lecteur est pris ailleurs (`player_taken`), en double (`player_twice`) ou si une A/B a moins de deux lecteurs ; persisté |
+| `POST /zone` | `{zone, name?, kind?}` ; persisté |
+| `POST /set` | `{path: "zones.<zone>.playlist.<option>", value}` (arbre de paramètres par id) ; persisté |
+| `GET /zones`, `GET /tabs` | listes vivantes |
+
+Depuis 0.1.8, `zone` est accepté (facultatif) par `/pl/*`, `/page`, `/pages` (ajout), `/grid`,
+`/mode`, `/playlist` (ajout, vidage), `/stop_all`, `/items` et `/keys`. Un id de page, de touche ou
+d'élément désigne sa zone tout seul. Document persisté (version 3) : `tabs` `[{id, name, layout,
+zones}]`, `tab`, `zones` `[{id, name, mode, players, grid, page, pages, playlist}]`, `settings`,
+`defaults`.
+
+Page publique jouable : le relais de l'orchestrateur ne transmet un POST que pour un lien créé avec
+« jouer » et un chemin de `control.public_actions` (`/fire`, `/stop`, `/pl/go`, `/player/play`,
+`/player/stop`) ; il pose lui-même l'en-tête `X-Bobi-Public-Scope`. Le conteneur refuse (403) une
+action ainsi marquée qui vise une touche, une zone ou un lecteur hors de l'onglet du lien.
 | `POST /preview`, `POST /preview/stop` | pré-écoute d'une touche ou d'un élément (`key` ou `item`, `start_ms`, `end_ms`, brouillon `edit` et `gain_db` facultatifs) ; état dans `/state.preview` |
 | `GET /wave` | fenêtre de forme d'onde d'un fichier source (`key`, `item` ou `asset`/`file`, `from_ms`, `to_ms`, `points`) |
 | `POST /montage/wave` | fenêtre de la timeline montée, avec sa disposition |

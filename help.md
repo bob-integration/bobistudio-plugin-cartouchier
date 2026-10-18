@@ -15,18 +15,48 @@ gesture has a two-tap equivalent.
 
 The **top bar** holds, from left to right:
 
-- **Grid** / **Playlist**: the mode on screen;
-- the **page tabs** (in Grid mode): tap a tab to show that page;
+- the cart's **tabs** (see below); a dot lights on a tab when one of its players plays, even when
+  it is hidden; in Edit mode, **+ Tab**;
+- **Tab layout…** (Edit mode only);
 - **Edit**: the switch between playing (tapping a key fires it) and preparing (tapping a key opens
   it);
 - **Saves**, **Settings**;
 - **🎧 Listen**, with the listened source;
 - **Stop all**: stops every player, each with its fade.
 
-Below the bar, **one card per player**; then the grid or the playlist.
+Below the bar, **one card per player** (number, zone, state); then the zones of the tab on screen.
 
-On a public link the page is read only: you see the players and the keys, you fire nothing, and
-listening is not available.
+On a public link the page shows **one tab** (the link's): its players, keys and playlist, live. By
+default it is read only; when the link was created with "Allow playing this tab", its keys can be
+fired and stopped, GO pressed and its players played or stopped — nothing else (no editing, no
+settings). Listening is not available there.
+
+## Tabs and zones
+
+The cart is organised in **tabs** you create (**+ Tab**, in Edit mode), name, move and delete. Each
+tab has a **layout**: 1 zone, 2 side by side, 2 stacked, or 1 + 2 (one on top, two below). On a
+narrow screen (phone, iPad portrait) side-by-side zones stack.
+
+Each slot of the layout holds a **zone**. A zone has a name, a content — **grid**, **playlist** (one
+player at a time) or **A/B playlist** (two players) — and its **players**. A player belongs to one
+zone only. Each zone has its own grid (columns, rows, pages, keys) or its own playlist (items, auto
+advance, loop, A/B handover). Example: a "Studio" tab with two grids side by side, "Guest A" on
+player 1 and "Guest B" on player 2; an "On air" tab with the jingles on player 5 above an A/B
+playlist on players 3 and 4.
+
+The players of a hidden tab **keep playing**: a tab is only a view.
+
+**Tab layout…** (Edit mode): the tab name, its layout, and for each slot the zone (one of the tab's,
+or a new one), its name, its content and its players. A player already held by a zone of another tab
+is greyed out (its owner is named): free it there first. An A/B playlist needs two players (the
+first two chosen). The zones the tab does not keep are deleted with their content — said before
+applying. What plays goes on.
+
+**Settings** (grid and pages) and **Saves** apply to the **selected zone**: the last one touched,
+outlined.
+
+A cart from before the tabs opens as it was: one tab, one zone holding every player, its grid and its
+playlist. Nothing to redo.
 
 ## Players
 
@@ -358,6 +388,7 @@ Three links with the console, without leaving its page:
 Actions:
 
 - press a key (fire it, or its second press), stop a key;
+- show a tab, next tab, previous tab; turn a zone into a grid, a playlist or an A/B playlist;
 - stop all (fades), cut all (no fade);
 - go to a page, next page, previous page;
 - playlist: GO, next, previous, prepare an item (and fire it at once);
@@ -368,14 +399,21 @@ Actions:
   page);
 - pre-listen a key, stop the pre-listen.
 
-The lists of keys, pages, items and saves are live.
+The lists of keys, pages, items, zones, tabs and saves are live.
+
+The playlist, page, mode, "stop all" and recall actions take an optional **zone**. Without one they
+act on the default zone of their kind: the first playlist (or grid) zone in tab order, else the first
+zone of the first tab. Macros, panels and fader-start links written before the tabs therefore act as
+before; the player actions (play, stop, "only if it has played") are unchanged.
 
 Readable states: players playing; title and time left of what is playing; mode; page shown; A/B
 and what becomes of the other player on launch (and the fade duration); item on air (number and title) and item ready; state, time left and title of players 1 and 2; state
-and title of the pre-listen.
+and title of the pre-listen; tab shown (id and number). Mode, page and playlist are those of the
+default zones; `/state.zones` and `/state.tabs` describe every zone.
 
 In the parameter tree: the levels (normalisation, target, maximum gain, alert threshold), the key
-defaults and, for the A/B playlist, what becomes of the other player on launch and its fade duration. Hardware surfaces and Ember+ go through these actions and states, as for any plugin.
+defaults and, for the A/B playlist, what becomes of the other player on launch and its fade duration; and, per zone (tree keyed by id, stable when zones are added or moved), the
+A/B handover, its duration, the auto advance and the loop of the playlist. Hardware surfaces and Ember+ go through these actions and states, as for any plugin.
 
 ## For integrators
 
@@ -441,8 +479,24 @@ loses its oldest audio; it never slows the audio thread down.
 |---|---|
 | `POST /assign` | assign a media to a key (`page`, `slot`, `media`, `title`); persisted |
 | `POST /defaults` | key defaults of the cart, or of a page with `page`; read in `/state.defaults` |
-| `GET /capture?kind=&page=` | capture of a grid, a playlist or a page for the library |
-| `POST /recall` | recall `{kind, payload, name, page, add}`, without a cut; persisted |
+| `GET /capture?kind=&page=&zone=` | capture of a grid, a playlist or a page (of a zone) for the library |
+| `POST /recall` | recall `{kind, payload, name, page, add, zone}`, without a cut; persisted |
+| `POST /tab` | tab shown: id, number, `next`, `prev`; persisted |
+| `POST /tabs` | `{op: add, rename, delete, move}`; persisted |
+| `POST /layout` | layout of a tab `{tab, layout: 1, 2h, 2v, 1+2, slots: [{zone?, name, kind, players}]}`, refused whole when a player is held elsewhere (`player_taken`), twice (`player_twice`) or an A/B zone has fewer than two players; persisted |
+| `POST /zone` | `{zone, name?, kind?}`; persisted |
+| `POST /set` | `{path: "zones.<zone>.playlist.<option>", value}` (parameter tree by id); persisted |
+| `GET /zones`, `GET /tabs` | live lists |
+
+Since 0.1.8 `zone` is accepted (optional) by `/pl/*`, `/page`, `/pages` (add), `/grid`, `/mode`,
+`/playlist` (add, clear), `/stop_all`, `/items` and `/keys`. A page, key or item id names its zone by
+itself. Persisted document (version 3): `tabs` `[{id, name, layout, zones}]`, `tab`, `zones`
+`[{id, name, mode, players, grid, page, pages, playlist}]`, `settings`, `defaults`.
+
+Playable public page: the orchestrator's relay forwards a POST only for a link created with "play"
+and a path of `control.public_actions` (`/fire`, `/stop`, `/pl/go`, `/player/play`,
+`/player/stop`); it sets the `X-Bobi-Public-Scope` header itself. The container refuses (403) an
+action so marked that targets a key, a zone or a player outside the link's tab.
 | `POST /preview`, `POST /preview/stop` | pre-listen a key or an item (`key` or `item`, `start_ms`, `end_ms`, optional draft `edit` and `gain_db`); state in `/state.preview` |
 | `GET /wave` | waveform window of a source file (`key`, `item` or `asset`/`file`, `from_ms`, `to_ms`, `points`) |
 | `POST /montage/wave` | window of the edited timeline, with its layout |

@@ -111,8 +111,8 @@ listen_hub = LI.ListenHub(N_PLAYERS, on_last_pfl=engine.preview_stop)
 
 def referenced_medias():
     d = engine.doc
-    out = [m for p in d["pages"] for k in p["keys"] for m in MT.edit_medias(k)]
-    out += [m for it in d["playlist"]["items"] for m in MT.edit_medias(it)]
+    out = [m for z in d["zones"] for p in z["pages"] for k in p["keys"] for m in MT.edit_medias(k)]
+    out += [m for z in d["zones"] for it in z["playlist"]["items"] for m in MT.edit_medias(it)]
     return [m for m in out if m.get("asset") or m.get("file")]
 
 
@@ -142,35 +142,43 @@ def state_view():
     # thread renders under the same lock, and a 500-item playlist's media views must not delay a
     # 1 ms block. The doc itself is never mutated in place (every edit commits a new one), so it
     # is read without the lock.
+    #
+    # Tabs and zones (0.1.8): `tabs` / `zones` describe every zone, ALL tabs included (a hidden
+    # tab's dot lights when one of its players plays). The top-level `mode`, `page*`, `grid` and
+    # `playlist` are those of the DEFAULT zone — what /state said before 0.1.8, so the declared
+    # macro states and older readers keep their meaning. key_media covers the page on screen of
+    # EVERY grid zone (a few dozen keys), item_media every playlist item, as before.
     with engine.lock:
         d = engine.doc
         players = engine.players_view(FLOWS)
-        on_air = engine.pl_on_air
-        plv = engine.playlist_view()
+        zv = engine.zones_view()
+        gz = engine.default_zone("grid")
+        pz = engine.default_zone("playlist")
+        plv = next(z["playlist"] for z in zv["zones"] if z["id"] == pz["id"])
         rev = engine.rev
         counters = dict(engine.counters)
         events = list(engine.events[-8:])
-    ids = [p["id"] for p in d["pages"]]
-    pi = ids.index(d["page"]) if d["page"] in ids else 0
-    page = d["pages"][pi]
+    ids = [p["id"] for p in gz["pages"]]
+    pi = ids.index(gz["page"]) if gz["page"] in ids else 0
+    page = gz["pages"][pi]
+    dz = engine.default_zone()
     cur = next((p for p in players if p["state"] in ("playing", "fading")), None)
+    shown = [next(p for p in z["pages"] if p["id"] == z["page"]) for z in d["zones"]]
     out = {{
         "type": "cartouchier", "version": PLUGIN_VERSION, "hostname": HOSTNAME,
-        "n_players": N_PLAYERS, "flows": FLOWS, "mode": d["mode"], "doc_rev": rev,
-        "page": d["page"], "page_index": pi + 1, "page_name": page["name"],
-        "pages_count": len(ids), "grid": d["grid"], "settings": d["settings"],
+        "n_players": N_PLAYERS, "flows": FLOWS, "mode": dz["mode"], "doc_rev": rev,
+        "page": gz["page"], "page_index": pi + 1, "page_name": page["name"],
+        "pages_count": len(ids), "grid": gz["grid"], "settings": d["settings"],
         "defaults": d["defaults"], "page_defaults": page.get("defaults") or {{}},
+        "tab": zv["tab"], "tab_index": zv["tab_index"], "tabs": zv["tabs"], "zones": zv["zones"],
         "players": players,
         "playing_count": sum(1 for p in players if p["state"] in ("playing", "fading")),
         "current_title": cur["title"] if cur else "",
         "current_remaining_ms": cur["remaining_ms"] if cur else 0,
-        "playlist": dict(plv, ab=d["playlist"]["ab"], auto=d["playlist"]["auto"],
-                         loop=d["playlist"]["loop"], ab_players=d["playlist"]["ab_players"],
-                         ab_handover=d["playlist"]["ab_handover"],
-                         ab_handover_ms=d["playlist"]["ab_handover_ms"]),
-        "on_air_title": next((it["title"] for it in d["playlist"]["items"] if it["id"] == on_air), ""),
-        "key_media": {{k["id"]: media_view(k) for k in page["keys"]}},
-        "item_media": {{it["id"]: media_view(it) for it in d["playlist"]["items"]}},
+        "playlist": plv,
+        "on_air_title": next((it["title"] for it in pz["playlist"]["items"] if it["id"] == plv["on_air"]), ""),
+        "key_media": {{k["id"]: media_view(k) for pg in shown for k in pg["keys"]}},
+        "item_media": {{it["id"]: media_view(it) for z in d["zones"] for it in z["playlist"]["items"]}},
         "counters": counters, "events": events,
         "preview": engine.preview_view(), "listen": listen_hub.stats(),
     }}
@@ -325,7 +333,7 @@ def _waveform(qs):
         if kind == "key":
             it = engine.find_key(v)
         elif kind == "item":
-            it = next((x for x in engine.doc["playlist"]["items"] if x["id"] == v), None)
+            it = engine.find_item(v)[1]
         else:
             try:
                 it = engine.players[int(v) - 1].item
@@ -501,16 +509,17 @@ def montage_job(jid):
 # imported from another installation may name sounds this node does not have — they are REPORTED
 # (the key is kept, its sound shows as missing), never a refusal.
 def _recalled_items(kind, doc, report):
+    z = next((x for x in doc["zones"] if x["id"] == report.get("zone")), None) or {{"pages": [], "playlist": {{"items": []}}}}
     if kind == "playlist":
-        return doc["playlist"]["items"]
+        return z["playlist"]["items"]
     if kind == "page":
-        return next((p["keys"] for p in doc["pages"] if p["id"] == report.get("page")), [])
-    return [k for p in doc["pages"] for k in p["keys"]]
+        return next((p["keys"] for p in z["pages"] if p["id"] == report.get("page")), [])
+    return [k for p in z["pages"] for k in p["keys"]]
 
 
 def recall(b):
     kind = b.get("kind")
-    r = engine.recall(kind, b.get("payload"), page=b.get("page"), add=bool(b.get("add")))
+    r = engine.recall(kind, b.get("payload"), page=b.get("page"), add=bool(b.get("add")), zone=b.get("zone") or None)
     report = r.pop("recall")
     missing = []
     for it in _recalled_items(kind, r, report):
@@ -538,18 +547,39 @@ def _get(path, qs):
     if path == "/flows":
         return 200, engine.flows_view(FLOWS)
     if path == "/keys":
-        return 200, {{"items": engine.key_options()}}
+        return 200, {{"items": engine.key_options(_q(qs, "zone"))}}
     if path == "/pages":
+        # every page of every zone (a page id names its zone), or those of ?zone=
         d = engine.doc
-        return 200, {{"items": [{{"value": p["id"], "label": "%d · %s" % (i + 1, p["name"] or p["id"])}}
-                               for i, p in enumerate(d["pages"])]}}
+        zf = _q(qs, "zone")
+        many = len(d["zones"]) > 1 and not zf
+        return 200, {{"items": [{{"value": p["id"], "label": ("%s · " % engine.zone_label(z, zi) if many else "")
+                                + "%d · %s" % (i + 1, p["name"] or p["id"])}}
+                               for zi, z in enumerate(d["zones"]) if not zf or z["id"] == zf
+                               for i, p in enumerate(z["pages"])]}}
+    if path == "/zones":
+        d = engine.doc
+        tabs = {{zid: (ti, t) for ti, t in enumerate(d["tabs"]) for zid in t["zones"]}}
+        out = []
+        for zi, z in enumerate(d["zones"]):
+            ti, t = tabs.get(z["id"], (0, {{}}))
+            out.append({{"value": z["id"], "label": "%s · %s (%s)" % (t.get("name") or "%d" % (ti + 1),
+                                                                    engine.zone_label(z, zi), E.zone_kind(z))}})
+        return 200, {{"items": out}}
+    if path == "/tabs":
+        d = engine.doc
+        return 200, {{"items": [{{"value": t["id"], "label": "%d · %s" % (i + 1, t["name"] or t["id"])}}
+                               for i, t in enumerate(d["tabs"])]}}
     if path == "/players":
         return 200, {{"items": [{{"value": i + 1, "label": "%d · %s" % (i + 1, f)}}
                                for i, f in enumerate(FLOWS)]}}
     if path == "/items":
-        d = engine.doc
+        try:
+            z = engine.zone(_q(qs, "zone"), "playlist")
+        except E.EngineError as ex:
+            return ex.status, {{"ok": False, "error": ex.code, "params": ex.params}}
         return 200, {{"items": [{{"value": i, "label": "%d · %s" % (i + 1, it["title"] or it["media"]["file"])}}
-                               for i, it in enumerate(d["playlist"]["items"])]}}
+                               for i, it in enumerate(z["playlist"]["items"])]}}
     if path == "/waveform":
         return _waveform(qs)
     if path == "/wave":
@@ -558,7 +588,7 @@ def _get(path, qs):
         return montage_job((qs.get("id") or [""])[0])
     if path == "/capture":
         try:
-            return 200, engine.capture((qs.get("kind") or [""])[0], (qs.get("page") or [""])[0] or None)
+            return 200, engine.capture(_q(qs, "kind", ""), _q(qs, "page"), _q(qs, "zone"))
         except E.EngineError as ex:
             return ex.status, {{"ok": False, "error": ex.code, "params": ex.params}}
     return 404, {{"error": "unknown"}}
@@ -570,19 +600,31 @@ def _post(path, b):
         return e.fire(b.get("key"))
     if path == "/stop":
         return e.stop_key(b.get("key"), cut=bool(b.get("cut")))
+    # `zone` (0.1.8) is optional everywhere: absent or empty = the default zone of the kind (see
+    # engine.default_zone) — so a macro or a console link written before the tabs acts as before.
+    z = b.get("zone") or None
     if path == "/stop_all":
-        return e.stop_all(cut=bool(b.get("cut")))
+        return e.stop_all(cut=bool(b.get("cut")), zone=z)
     if path == "/page":
-        e.set_page(b.get("page"))
-        return {{"page": e.doc["page"]}}
+        return e.set_page(b.get("page"), zone=z)
     if path == "/pl/go":
-        return e.pl_go()
+        return e.pl_go(zone=z)
     if path == "/pl/next":
-        return e.pl_step(+1)
+        return e.pl_step(+1, zone=z)
     if path == "/pl/prev":
-        return e.pl_step(-1)
+        return e.pl_step(-1, zone=z)
     if path == "/pl/goto":
-        return e.pl_goto(b.get("index"), play=bool(b.get("play")))
+        return e.pl_goto(b.get("index"), play=bool(b.get("play")), zone=z)
+    if path == "/tab":
+        return e.set_tab(b.get("tab"))
+    if path == "/tabs":
+        return e.tabs_op(b)
+    if path == "/layout":
+        return e.set_layout(b)
+    if path == "/zone":
+        return e.set_zone(b)
+    if path == "/set":
+        return e.set_path(b.get("path"), b.get("value"))
     if path == "/pl/options":
         return e.pl_options(b)
     if path == "/player/play":
@@ -606,7 +648,7 @@ def _post(path, b):
     if path == "/grid":
         return e.set_grid(b)
     if path == "/mode":
-        return e.set_mode(b.get("mode"))
+        return e.set_mode(b.get("mode"), zone=z)
     if path == "/playlist":
         r = e.playlist_op(b)
         library.want(referenced_medias())
@@ -633,6 +675,48 @@ def _post(path, b):
         library.want(referenced_medias())
         return {{"ok": True}}
     return None
+
+
+# ─── Public tab (0.1.8) ──────────────────────────────────────────────────────────────────────
+# A public link (/p/<token>) may be allowed to PLAY one tab, without an account (opt-in per link).
+# The orchestrator's relay forwards such a POST only for a path of `control.public_actions` and sets
+# the link's scope in X-Bobi-Public-Scope ITSELF (a client-sent one is stripped there). This side is
+# the second lock, and the only one that knows what a key, a zone or a player belongs to:
+#   ⚠ a request carrying the scope may only press / stop a key, GO, play or stop a player of a zone
+#   of THE SCOPED TAB. Anything else is 403 — another tab's key, a player of another zone, an edit.
+# PUBLIC_ACTIONS must equal the manifest's control.public_actions (checked by the test): the relay
+# filters on the manifest, this server on this list, and neither may be wider than the other.
+PUBLIC_ACTIONS = ("/fire", "/stop", "/pl/go", "/player/play", "/player/stop")
+SCOPE_HEADER = "X-Bobi-Public-Scope"
+
+
+def public_scope_refusal(path, b, raw):
+    """None if the scoped request may run, else the refusal code."""
+    try:
+        scope = json.loads(raw)
+    except ValueError:
+        return "bad_scope"
+    if not isinstance(scope, dict) or not scope.get("play"):
+        return "read_only"
+    if path not in PUBLIC_ACTIONS:
+        return "not_public"
+    tab = scope.get("tab")
+    if not tab:
+        return "no_tab"
+    with engine.lock:
+        if path in ("/fire", "/stop"):
+            zid = engine._key_zone.get(b.get("key"))
+        elif path == "/pl/go":
+            try:
+                zid = engine.zone(b.get("zone") or None, "playlist")["id"]
+            except E.EngineError:
+                zid = None
+        else:
+            try:
+                zid = engine._player_zone.get(int(b.get("player")))
+            except (TypeError, ValueError):
+                zid = None
+        return None if zid and engine.tab_of_zone(zid) == tab else "out_of_scope"
 
 
 class Control(BaseHTTPRequestHandler):
@@ -682,6 +766,12 @@ class Control(BaseHTTPRequestHandler):
             return _reply(self, 400, {{"ok": False, "error": "bad_json"}})
         if not isinstance(body, dict):
             return _reply(self, 400, {{"ok": False, "error": "bad_json"}})
+        scope = self.headers.get(SCOPE_HEADER)
+        if scope is not None:
+            why = public_scope_refusal(u.path, body, scope)
+            if why:
+                log("public action refused: %s %s (%s)" % (u.path, json.dumps(body)[:200], why), "warning")
+                return _reply(self, 403, {{"ok": False, "error": why}})
         try:
             r = _post(u.path, body)
         except E.EngineError as ex:
@@ -694,7 +784,7 @@ class Control(BaseHTTPRequestHandler):
             return _reply(self, 404, {{"ok": False, "error": "unknown"}})
         out = {{"ok": True}}
         if isinstance(r, dict):
-            out.update(r if "pages" not in r else {{"doc": r}})
+            out.update(r if "zones" not in r else {{"doc": r}})
         _reply(self, 200, out)
 
     def log_message(self, *a):

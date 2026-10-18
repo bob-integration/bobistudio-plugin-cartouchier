@@ -20,6 +20,14 @@
 // truth every 250 ms, the frame clock makes the tenths move smoothly. A paused or idle player is
 // never interpolated.
 //
+// TABS AND ZONES (0.1.8). The cart is a set of tabs; a tab has a layout (1, 2 side by side, 2 stacked,
+// 1 + 2) whose slots hold ZONES — a grid, a playlist or a playlist A/B, each with its own players,
+// pages, keys or items. Each zone is rendered in its slot and re-rendered only when what IT shows
+// changed (a per-zone signature): the poll never rebuilds the whole tab. The settings and saves
+// panels act on the FOCUSED zone (the last one touched). The public page (/p/<token>) shows ONE tab
+// (`ctx.tab`); it can play it only when the link allows it (`ctx.play`), and then only the paths of
+// PUBLIC_PATHS — the relay and the container refuse anything else anyway.
+//
 // INHERITED BEHAVIOUR (0.1.2). A key's stop fade, second press, loop, exclusive group and assigned
 // player are `null` when the key inherits them — from its page's defaults, else from the cart's
 // (engine.py: resolve). The editor shows "default (value)" or the key's own value, with a way back
@@ -73,14 +81,74 @@
     }
     return (!s && list.length === 1) ? 0 : -1;
   }
-  // "key:<slot>" | "pl:<index>" (data-drop of a drop target) → target.
+  // "key:<slot>[@<page>]" | "pl:<index>[@<zone>]" (data-drop of a drop target) → target. The suffix
+  // (0.1.8) says WHICH grid page or playlist zone: two zones side by side are two drop areas.
   function parseDrop(s) {
-    const m = /^(key|pl):(\d+)$/.exec(String(s || ''));
+    const m = /^(key|pl):(\d+)(?:@([\w-]{1,32}))?$/.exec(String(s || ''));
     if (!m) return null;
-    return m[1] === 'key' ? {kind: 'key', slot: +m[2]} : {kind: 'pl', index: +m[2]};
+    const t = m[1] === 'key' ? {kind: 'key', slot: +m[2]} : {kind: 'pl', index: +m[2]};
+    if (m[3]) t[m[1] === 'key' ? 'page' : 'zone'] = m[3];
+    return t;
+  }
+  // ── tabs, zones, public page (0.1.8) ──
+  const LAYOUT_SLOTS = {'1': 1, '2h': 2, '2v': 2, '1+2': 3};
+  const KINDS = ['grid', 'playlist', 'playlist_ab'];
+  // What the public relay may carry when the link allows playing: the container's PUBLIC_ACTIONS,
+  // the manifest's control.public_actions (the test checks the three are the same list).
+  const PUBLIC_PATHS = ['/fire', '/stop', '/pl/go', '/player/play', '/player/stop'];
+  // pub = null (console with a session) or {tab, play}: may this POST be attempted at all?
+  function postAllowed(path, pub) {
+    if (!pub) return true;
+    return !!pub.play && PUBLIC_PATHS.indexOf(path) >= 0;
+  }
+  // The tab on screen: the link's tab on a public page (null if the link names a tab that no longer
+  // exists — nothing is shown rather than another tab), else the cart's shown tab.
+  function tabToShow(doc, pub) {
+    if (!doc || !doc.tabs || !doc.tabs.length) return null;
+    if (pub && pub.tab) return doc.tabs.find(t => t.id === pub.tab) || null;
+    return doc.tabs.find(t => t.id === doc.tab) || doc.tabs[0];
+  }
+  function zoneKind(z) {
+    if (!z || z.mode !== 'playlist') return 'grid';
+    return z.playlist && z.playlist.ab ? 'playlist_ab' : 'playlist';
+  }
+  // Slots of a layout draft resized to a new layout: kept in order, new ones empty grid zones.
+  function resizeSlots(slots, layout) {
+    const n = LAYOUT_SLOTS[layout] || 1, out = slots.slice(0, n);
+    while (out.length < n) out.push({zone: null, name: '', kind: 'grid', players: []});
+    return out;
+  }
+  // The layout editor's rules, the engine's (set_layout) checked BEFORE sending: a refusal named in
+  // the page beats a round trip. Returns {code, player?} or null.
+  function layoutCheck(doc, tabId, slots) {
+    const kept = new Set(slots.map(s => s.zone).filter(Boolean));
+    const others = {};
+    (doc.tabs || []).forEach(t => {
+      if (t.id === tabId) return;
+      t.zones.forEach(zid => {
+        if (kept.has(zid)) return;
+        const z = (doc.zones || []).find(x => x.id === zid);
+        (z ? z.players : []).forEach(n => { others[n] = zid; });
+      });
+    });
+    const seen = new Set();
+    for (const s of slots) {
+      if (KINDS.indexOf(s.kind) < 0) return {code: 'bad_kind'};
+      for (const n of s.players || []) {
+        if (seen.has(n)) return {code: 'player_twice', player: n};
+        if (others[n]) return {code: 'player_taken', player: n, zone: others[n]};
+        seen.add(n);
+      }
+      if (s.kind === 'playlist_ab' && (s.players || []).length < 2) return {code: 'ab_needs_two_players'};
+    }
+    return null;
   }
 
   let EL = null, VMID = null, BASE = null, PUBLIC = false, TOAST = () => {};
+  let PUB_TAB = null, PUB_PLAY = false;  // public page: the link's tab, and whether it may play it
+  const PUB_PAGE = {};                // public page: the grid page each zone shows (local: browsing is not an order)
+  let ZID = null;                     // the FOCUSED zone (settings, saves, library « + Playlist »)
+  let zoneSigs = {}, layoutSig = '';  // what each zone slot was last rendered from
   let timer = null, raf = null;
   let S = null;                       // last /state
   let S_AT = 0;                       // performance.now() of that /state
@@ -111,7 +179,7 @@
   }
 
   async function post(p, body) {
-    if (PUBLIC) { TOAST(T('read_only', 'Lien public : lecture seule'), 'warning'); return null; }
+    if (!postAllowed(p, pubCtx())) { TOAST(T('read_only', 'Lien public : lecture seule'), 'warning'); return null; }
     let r, d = {};
     try {
       r = await fetch(api(p), {method: 'POST', headers: {'Content-Type': 'application/json'},
@@ -140,26 +208,44 @@
   }
   const baseName = p => { const s = String(p || ''); const i = s.lastIndexOf('/'); return i >= 0 ? s.slice(i + 1) : s; };
   const mediaName = n => String(n || '').replace(/__(?:[0-9a-f]{8}|[0-9a-f]{6})(?:_[a-z0-9]{1,16})?(\.[^./]{1,8})?$/, '$1');
-  const curPage = () => DOC.pages.find(p => p.id === DOC.page) || DOC.pages[0];
+  const pubCtx = () => (PUBLIC ? {tab: PUB_TAB, play: PUB_PLAY} : null);
+  const zoneById = id => (DOC && DOC.zones.find(z => z.id === id)) || null;
+  const shownTab = () => tabToShow(DOC, PUB_TAB ? pubCtx() : null);
+  const Z = () => zoneById(ZID) || zoneById(((shownTab() || {}).zones || [])[0]) || DOC.zones[0];
+  const zoneView = id => ((S && S.zones) || []).find(z => z.id === id) || null;
+  const pageOf = z => (PUBLIC && PUB_PAGE[z.id] && z.pages.find(p => p.id === PUB_PAGE[z.id]))
+    || z.pages.find(p => p.id === z.page) || z.pages[0];
+  const curPage = () => pageOf(Z());
+  const allPages = () => DOC.zones.reduce((a, z) => a.concat(z.pages), []);
+  const findPage = id => allPages().find(p => p.id === id) || null;
+  const zoneOfPage = id => DOC.zones.find(z => z.pages.some(p => p.id === id)) || null;
+  const zoneOfItem = id => DOC.zones.find(z => z.playlist.items.some(it => it.id === id)) || null;
+  function zoneLabel(z) {
+    if (!z) return '';
+    if (z.name) return z.name;
+    const m = /(\d+)$/.exec(z.id || '');
+    return T('zone_n', 'Zone {n}').replace('{n}', m ? m[1] : '');
+  }
+  function tabLabel(t, i) {
+    if (t && t.name) return t.name;
+    return T('tab_n', 'Onglet {n}').replace('{n}', i + 1);
+  }
 
   // ── skeleton ──
   function skeleton() {
     EL.innerHTML = `
       <div class="cart-root">
         <div class="cart-bar">
-          <div class="cart-seg" role="group" aria-label="${esc(T('mode', 'Mode'))}">
-            <button type="button" class="cart-btn" data-mode="grid">${esc(T('mode_grid', 'Grille'))}</button>
-            <button type="button" class="cart-btn" data-mode="playlist">${esc(T('mode_playlist', 'Playlist'))}</button>
-          </div>
-          <div class="cart-pages" role="tablist"></div>
+          <div class="cart-tabs" role="tablist" aria-label="${esc(T('tabs', 'Onglets'))}"></div>
           <span class="cart-spacer"></span>
+          <button type="button" class="cart-btn cart-layout-btn" hidden>${esc(T('layout_edit', 'Disposition de l\'onglet…'))}</button>
           <label class="cart-edit-sw"${PUBLIC ? ' hidden' : ''}><input type="checkbox" class="ctl-switch cart-edit-in"> ${esc(T('edit', 'Édition'))}</label>
           <button type="button" class="cart-btn cart-saves-btn"${PUBLIC ? ' hidden' : ''}>${esc(T('sv_title', 'Sauvegardes'))}</button>
           <button type="button" class="cart-btn cart-settings-btn"${PUBLIC ? ' hidden' : ''}>${esc(T('settings', 'Réglages'))}</button>
           <div class="cart-listen"${PUBLIC ? ' hidden' : ''}></div>
           <button type="button" class="cart-btn cart-stopall"${PUBLIC ? ' hidden' : ''}>${esc(T('stop_all', 'Tout arrêter'))}</button>
         </div>
-        ${PUBLIC ? `<p class="cart-note">${esc(T('read_only', 'Lien public : lecture seule'))}</p>` : ''}
+        ${PUBLIC && !PUB_PLAY ? `<p class="cart-note">${esc(T('read_only', 'Lien public : lecture seule'))}</p>` : ''}
         <div class="cart-undo" role="status" aria-live="polite" hidden>
           <span class="cart-undo-txt"></span>
           <button type="button" class="cart-btn cart-undo-btn">${esc(T('undo', 'Annuler'))}</button>
@@ -178,12 +264,13 @@
             <div class="cart-lib"></div>
           </div>
         </div>
+        <div class="cart-panel cart-layout-ed" hidden></div>
         <div class="cart-panel cart-editor" hidden></div>
         <div class="cart-panel cart-settings" hidden></div>
         <div class="cart-panel cart-saves" hidden></div>
       </div>`;
-    EL.querySelectorAll('[data-mode]').forEach(b => { b.onclick = () => post('/mode', {mode: b.dataset.mode}); });
-    $('.cart-edit-in').onchange = e => { EDIT = e.target.checked; syncLib(); renderMain(); };
+    $('.cart-edit-in').onchange = e => { EDIT = e.target.checked; if (!EDIT) $('.cart-layout-ed').hidden = true; syncLib(); renderMain(); };
+    $('.cart-layout-btn').onclick = () => openLayoutEditor();
     $('.cart-settings-btn').onclick = () => openSettings();
     $('.cart-saves-btn').onclick = () => openSaves();
     $('.cart-stopall').onclick = () => post('/stop_all', {cut: false});
@@ -207,14 +294,26 @@
   }
 
   // ── players ──
+  // The players on the strip: all of them — on a public page, only those of the shared tab's zones.
+  function stripPlayers() {
+    if (!S) return [];
+    if (!PUBLIC || !PUB_TAB) return S.players;
+    const t = shownTab(), zs = t ? t.zones : [];
+    return S.players.filter(p => zs.indexOf(p.zone) >= 0);
+  }
   function renderPlayers() {
     const host = $('.cart-players');
     if (!host || !S) return;
-    if (host.childElementCount !== S.players.length) {
-      host.innerHTML = S.players.map(p => `
+    const list = stripPlayers();
+    const ids = list.map(p => p.player).join(',');
+    if (host.dataset.ids !== ids) {
+      host.dataset.ids = ids;
+      const canPlay = !PUBLIC || PUB_PLAY;
+      host.innerHTML = list.map(p => `
         <div class="cart-player" data-player="${p.player}">
           <div class="cart-player-head">
             <span class="cart-player-n">${esc(T('player_short', 'L'))}${p.player}</span>
+            <span class="cart-player-zone"></span>
             <span class="cart-state"></span>
             <span class="cart-player-title"></span>
           </div>
@@ -222,9 +321,9 @@
           <div class="cart-sub"><span class="cart-elapsed"></span>
             <span class="cart-intro"></span><span class="cart-outro"></span></div>
           <canvas class="cart-wave" height="44"></canvas>
-          <div class="cart-player-acts"${PUBLIC ? ' hidden' : ''}>
+          <div class="cart-player-acts"${canPlay ? '' : ' hidden'}>
             <button type="button" class="cart-btn cart-pp" data-act="play" aria-label="${esc(T('play', 'Lancer'))}">▶</button>
-            <button type="button" class="cart-btn cart-pp" data-act="pause" aria-label="${esc(T('pause', 'Pause'))}">❚❚</button>
+            ${PUBLIC ? '' : `<button type="button" class="cart-btn cart-pp" data-act="pause" aria-label="${esc(T('pause', 'Pause'))}">❚❚</button>`}
             <button type="button" class="cart-btn cart-pp" data-act="stop" aria-label="${esc(T('stop', 'Arrêter'))}">■</button>
           </div>
         </div>`).join('');
@@ -235,10 +334,12 @@
         });
       });
     }
-    S.players.forEach(p => {
+    list.forEach(p => {
       const card = host.querySelector(`[data-player="${p.player}"]`);
       if (!card) return;
       card.dataset.state = p.state;
+      const zv = zoneView(p.zone);
+      card.querySelector('.cart-player-zone').textContent = zv ? zv.label : T('zone_none', 'sans zone');
       card.querySelector('.cart-state').textContent = T('st_' + p.state, p.state);
       card.querySelector('.cart-player-title').textContent = p.title || (p.state === 'idle' ? '' : (p.key || ''));
       const wk = p.player + '|' + (p.key || '');
@@ -331,15 +432,45 @@
     const m = /(\d+)$/.exec((p && p.id) || '');
     return T('page_n', 'Page {n}').replace('{n}', m ? m[1] : i + 1);
   }
-  // ── bar (mode, pages) ──
+  // ── bar: tabs (0.1.8). A dot lights on a tab when one of its players plays — the tab may be hidden.
   function renderBar() {
     if (!DOC) return;
-    EL.querySelectorAll('[data-mode]').forEach(b => b.classList.toggle('is-on', b.dataset.mode === DOC.mode));
-    const host = $('.cart-pages');
-    host.hidden = DOC.mode !== 'grid';
-    host.innerHTML = DOC.pages.map((p, i) => `<button type="button" role="tab" class="cart-btn cart-page${p.id === DOC.page ? ' is-on' : ''}"
-       data-page="${esc(p.id)}" aria-selected="${p.id === DOC.page}">${esc(pageLabel(p, i))}</button>`).join('');
-    host.querySelectorAll('[data-page]').forEach(b => { b.onclick = () => post('/page', {page: b.dataset.page}); });
+    const host = $('.cart-tabs');
+    const t = shownTab();
+    const lb = $('.cart-layout-btn');
+    lb.hidden = !(EDIT && !PUBLIC);
+    const sig = JSON.stringify([DOC.tabs.map(x => [x.id, x.name]), t && t.id, EDIT]);
+    if (host.dataset.sig === sig) { paintDots(); return; }      // the poll does not rebuild the strip
+    host.dataset.sig = sig;
+    if (PUBLIC && PUB_TAB) {
+      host.innerHTML = t ? `<span class="cart-tab-name">${esc(tabLabel(t, DOC.tabs.indexOf(t)))}</span>` : '';
+      return;
+    }
+    host.innerHTML = DOC.tabs.map((x, i) => `<button type="button" role="tab" class="cart-btn cart-tab${t && x.id === t.id ? ' is-on' : ''}"
+       data-tab="${esc(x.id)}" aria-selected="${!!t && x.id === t.id}"${PUBLIC ? ' disabled' : ''}><span class="cart-dot" aria-hidden="true"></span>${esc(tabLabel(x, i))}</button>`).join('')
+      + (EDIT && !PUBLIC ? `<button type="button" class="cart-btn cart-tab-add">${esc(T('tab_add', '+ Onglet'))}</button>` : '');
+    host.querySelectorAll('[data-tab]').forEach(b => { b.onclick = () => post('/tab', {tab: b.dataset.tab}); });
+    const add = host.querySelector('.cart-tab-add');
+    if (add) add.onclick = async () => {
+      const d = await post('/tabs', {op: 'add', name: T('tab_new', 'Nouvel onglet')});
+      if (d) openLayoutEditor(true);
+    };
+    paintDots();
+  }
+  function paintDots() {
+    if (!EL || !S || !S.tabs) return;
+    S.tabs.forEach(tv => {
+      const b = EL.querySelector(`.cart-tab[data-tab="${tv.id}"] .cart-dot`);
+      if (b) b.classList.toggle('is-on', !!tv.playing);
+    });
+  }
+  // Grid page tabs of ONE zone, in its header. On a public page, browsing pages is local (keys are
+  // pressed by id: another page's key plays the same way), never an order to the cart.
+  function zonePagesHtml(z) {
+    const pg = pageOf(z);
+    return `<div class="cart-pages" role="tablist">${z.pages.length < 2 && !EDIT ? '' : z.pages.map((p, i) =>
+      `<button type="button" role="tab" class="cart-btn cart-page${p.id === pg.id ? ' is-on' : ''}" data-page="${esc(p.id)}"
+        aria-selected="${p.id === pg.id}">${esc(pageLabel(p, i))}</button>`).join('')}</div>`;
   }
 
   // ── drop targets (keys, playlist positions): files, media from the panel ──
@@ -382,18 +513,19 @@
     return S ? S.players.find(p => p.origin === 'grid' && p.key === id && p.state !== 'idle') : null;
   }
 
-  function renderGrid(host) {
-    const pg = curPage();
-    const n = DOC.grid.cols * DOC.grid.rows;
+  function renderGrid(host, z) {
+    const pg = pageOf(z);
+    const n = z.grid.cols * z.grid.rows;
+    const canPlay = !PUBLIC || PUB_PLAY;
     const bySlot = {};
     pg.keys.forEach(k => { bySlot[k.slot] = k; });
     const hidden = pg.keys.filter(k => k.slot >= n).length;
     const media = (S && S.key_media) || {};
-    let html = `<div class="cart-grid" style="grid-template-columns:repeat(${DOC.grid.cols},minmax(0,1fr))">`;
+    let html = `<div class="cart-grid" style="grid-template-columns:repeat(${z.grid.cols},minmax(0,1fr))">`;
     for (let s = 0; s < n; s++) {
       const k = bySlot[s];
       if (!k) {
-        html += `<button type="button" class="cart-key is-empty" data-slot="${s}" data-drop="key:${s}"${EDIT ? '' : ' tabindex="-1"'}>${EDIT ? '+' : ''}</button>`;
+        html += `<button type="button" class="cart-key is-empty" data-slot="${s}" data-drop="key:${s}@${esc(pg.id)}"${EDIT ? '' : ' tabindex="-1"'}>${EDIT ? '+' : ''}</button>`;
         continue;
       }
       const m = media[k.id] || {};
@@ -402,7 +534,7 @@
       const flags = [e.loop ? '⟲' : '', k.next ? '→' : '', e.group ? esc(e.group) : '',
                      e.player ? T('player_short', 'L') + e.player : ''].filter(Boolean).join(' ');
       html += `<button type="button" class="cart-key${p ? ' is-' + p.state : ''}${m.state && m.state !== 'ready' ? ' is-media-' + m.state : ''}"
-          data-slot="${s}" data-drop="key:${s}" data-key="${esc(k.id)}" data-color="${esc(k.color || '')}"${p ? ` data-player="${p.player}"` : ''}>
+          data-slot="${s}" data-drop="key:${s}@${esc(pg.id)}" data-key="${esc(k.id)}"${canPlay ? '' : ' aria-disabled="true"'} data-color="${esc(k.color || '')}"${p ? ` data-player="${p.player}"` : ''}>
           <span class="cart-key-title">${esc(k.title || mediaName(baseName(k.media.file)) || T('untitled', 'Sans titre'))}</span>
           ${EDIT && !PUBLIC ? `<span class="cart-key-pfl" data-pfl="${esc(k.id)}" role="button" aria-label="${esc(T('pfl_key', 'Pré-écouter'))}">🎧</span>` : ''}
           <span class="cart-key-meta"><span>${esc(fmtDur(m.duration_ms))}</span><span>${flags}</span></span>
@@ -419,7 +551,7 @@
         if (EDIT && armed) { dropMedia({kind: 'key', page: pg.id, slot: s}, armed); return; }   // tap-tap
         if (EDIT && pflTap(b, ev)) return;                                                          // 🎧 on the key: pre-listen
         if (EDIT) { openEditor(pg.id, s, bySlot[s] || null); return; }
-        if (b.dataset.key) post('/fire', {key: b.dataset.key});
+        if (b.dataset.key && canPlay) post('/fire', {key: b.dataset.key});
       };
       // Quick deposit: a desktop FILE dropped on a key (or an empty slot) — the editor's "Send a
       // file" button does the same; and a media dragged from the panel (mouse).
@@ -480,12 +612,12 @@
         .replace('{k}', (prev && (prev.title || mediaName(baseName(prev.media.file)))) || '').replace('{n}', x.name || ''),
         () => prev ? post('/key', {page: pageId, slot: prev.slot, key: prev}) : post('/key', {id: kid, delete: true}));
       if (editing && editing.page === pageId && editing.slot === t.slot) {
-        const pg = DOC.pages.find(p => p.id === pageId);
+        const pg = findPage(pageId);
         openEditor(pageId, t.slot, pg ? pg.keys.find(k => k.id === kid) : null);
       }
     } else {
       const items = list.map(x => ({media: {asset: x.asset || null, file: x.path || ''}, title: x.name || ''}));
-      const d = await post('/playlist', {op: 'add', at: t.index, items});
+      const d = await post('/playlist', {op: 'add', at: t.index, items, zone: t.zone || Z().id});
       if (!d) return;
       const ids = (d.doc && d.doc.added) || [];
       showUndo(T('undo_inserted', '{n} élément(s) ajouté(s) à la playlist.').replace('{n}', ids.length),
@@ -530,7 +662,7 @@
         const a = m.asset || null;
         const media = {asset: a ? a.id : null, file: m.path || ''};
         const title = (a && ((a.meta || {}).title || a.name)) || mediaName(baseName(m.path));
-        if (id === 'add') { assignMedia({playlist: true}, media, title); return; }
+        if (id === 'add') { assignMedia({playlist: true, zone: Z().id}, media, title); return; }
         if (libTarget) {
           const t = libTarget;
           libTarget = null; paintLibHead();
@@ -654,7 +786,7 @@
       el.addEventListener('click', swallow, {capture: true, once: true});
       setTimeout(() => el.removeEventListener('click', swallow, {capture: true}), 400);
       const t = !cancel && d.over ? parseDrop(d.over.dataset.drop) : null;
-      if (t) dropMedia(t.kind === 'key' ? Object.assign(t, {page: curPage().id}) : t, d.m);
+      if (t) dropMedia(t.kind === 'key' && !t.page ? Object.assign(t, {page: curPage().id}) : t, d.m);
     };
     const up = () => finish(false), cc = () => finish(true);
     window.addEventListener('pointermove', move, {passive: false});
@@ -669,13 +801,13 @@
       post('/playlist', {op: 'update', item: {id: t.item.id, media, title: t.item.title || title}});
       return;
     }
-    if (t.playlist) { post('/playlist', {op: 'add', items: [{media, title}]}); return; }
+    if (t.playlist) { post('/playlist', {op: 'add', items: [{media, title}], zone: t.zone || Z().id}); return; }
     const key = Object.assign({}, t.key || {}, {media});
     if (!key.title) key.title = title;
     post('/key', {page: t.page, slot: t.slot, key}).then(d => {
       if (d && editing && editing.slot === t.slot && editing.page === t.page) {
         const id = (d.doc && d.doc.key_id) || key.id;
-        const pg = DOC.pages.find(p => p.id === t.page);
+        const pg = findPage(t.page);
         openEditor(t.page, t.slot, pg ? pg.keys.find(k => k.id === id) : null);
       }
     });
@@ -744,9 +876,11 @@
   function openEditor(pageId, slot, key) {
     editing = {page: pageId, slot, key};
     const k = key || {title: '', media: {asset: null, file: ''}, gain_db: 0, next: '', intro_ms: 0, outro_ms: 0, color: ''};
-    const pg = DOC.pages.find(p => p.id === pageId) || curPage();
+    const pg = findPage(pageId) || curPage();
+    const zk = zoneOfPage(pg.id) || Z();
     const media = key && S && S.key_media ? (S.key_media[key.id] || {}) : {};
-    const keys = DOC.pages.flatMap((p, i) => p.keys.filter(x => !key || x.id !== key.id).map(x =>
+    // a key chains on a key of ITS zone (played by that zone's players)
+    const keys = zk.pages.flatMap((p, i) => p.keys.filter(x => !key || x.id !== key.id).map(x =>
       ({id: x.id, label: pageLabel(p, i) + ' · ' + (x.title || x.id)})));
     const nPl = (S && S.n_players) || 2;
     const inh = effectiveOf({}, pg.defaults, DOC.defaults);
@@ -826,11 +960,11 @@
         if (d) { box.hidden = true; editing = null; }
       };
       const move = async delta => {
-        const n = DOC.grid.cols * DOC.grid.rows;
+        const n = zk.grid.cols * zk.grid.rows;
         const to = Math.max(0, Math.min(n - 1, slot + delta));
         if (to === slot) return;
         const d = await post('/key', {page: pageId, slot: to, key: {id: key.id}});
-        if (d) { const p2 = DOC.pages.find(p => p.id === pageId); openEditor(pageId, to, p2.keys.find(x => x.id === key.id)); }
+        if (d) { const p2 = findPage(pageId); openEditor(pageId, to, p2.keys.find(x => x.id === key.id)); }
       };
       box.querySelector('.cart-ed-left').onclick = () => move(-1);
       box.querySelector('.cart-ed-right').onclick = () => move(+1);
@@ -850,16 +984,17 @@
       ${mode === 'fade' ? `<label class="cart-ho-msl"><input type="number" class="cart-ho-ms" min="0" max="30000" step="100" inputmode="numeric" value="${Number(pl.ab_handover_ms) || 0}"${dis}> ${esc(T('ho_ms', 'ms'))}</label>` : ''}</span>`;
   }
 
-  function renderPlaylist(host) {
-    const pl = DOC.playlist;
-    const v = (S && S.playlist) || {};
+  function renderPlaylist(host, z) {
+    const pl = z.playlist, zid = z.id;
+    const v = (zoneView(zid) || {}).playlist || {};
     const media = (S && S.item_media) || {};
+    const canPlay = !PUBLIC || PUB_PLAY;
     host.innerHTML = `
       <div class="cart-pl-bar">
-        <button type="button" class="cart-btn cart-primary cart-go"${PUBLIC ? ' disabled' : ''}>${esc(T('go', 'GO'))}</button>
+        <button type="button" class="cart-btn cart-primary cart-go"${canPlay ? '' : ' disabled'}>${esc(T('go', 'GO'))}</button>
         <button type="button" class="cart-btn cart-pl-prev"${PUBLIC ? ' disabled' : ''} aria-label="${esc(T('pl_prev', 'Précédent'))}">◀</button>
         <button type="button" class="cart-btn cart-pl-next"${PUBLIC ? ' disabled' : ''} aria-label="${esc(T('pl_next', 'Suivant'))}">▶</button>
-        <label class="cart-sw"><input type="checkbox" class="ctl-switch cart-ab"${pl.ab ? ' checked' : ''}${PUBLIC || ((S && S.n_players) || 2) < 2 ? ' disabled' : ''}> ${esc(T('ab', 'A/B'))}</label>
+        <label class="cart-sw"><input type="checkbox" class="ctl-switch cart-ab"${pl.ab ? ' checked' : ''}${PUBLIC || z.players.length < 2 ? ' disabled' : ''}> ${esc(T('ab', 'A/B'))}</label>
         ${pl.ab ? handoverHtml(pl) : ''}
         <label class="cart-sw"><input type="checkbox" class="ctl-switch cart-auto"${pl.auto ? ' checked' : ''}${PUBLIC ? ' disabled' : ''}> ${esc(T('auto', 'Enchaînement auto'))}</label>
         <label class="cart-sw"><input type="checkbox" class="ctl-switch cart-plloop"${pl.loop ? ' checked' : ''}${PUBLIC ? ' disabled' : ''}> ${esc(T('pl_loop', 'Boucler la liste'))}</label>
@@ -870,7 +1005,7 @@
       <ol class="cart-pl">${pl.items.map((it, i) => {
         const m = media[it.id] || {};
         const onAir = it.id === v.on_air, ready = it.id === v.ready;
-        return `<li class="cart-pl-row${onAir ? ' is-onair' : ''}${ready ? ' is-ready' : ''}" data-item="${esc(it.id)}" data-index="${i}" data-color="${esc(it.color || '')}"${EDIT ? ` data-drop="pl:${i}"` : ''}>
+        return `<li class="cart-pl-row${onAir ? ' is-onair' : ''}${ready ? ' is-ready' : ''}" data-item="${esc(it.id)}" data-index="${i}" data-color="${esc(it.color || '')}"${EDIT ? ` data-drop="pl:${i}@${esc(zid)}"` : ''}>
           <button type="button" class="cart-pl-pick">
             <span class="cart-pl-n">${i + 1}</span>
             <span class="cart-pl-title">${esc(it.title || mediaName(baseName(it.media.file)) || T('untitled', 'Sans titre'))}</span>
@@ -886,32 +1021,33 @@
             <button type="button" class="cart-btn" data-op="clip" aria-label="${esc(T('clip_edit', 'Éditer le clip…'))}">✂</button>
             <button type="button" class="cart-btn cart-danger" data-op="remove" aria-label="${esc(T('delete', 'Supprimer'))}">✕</button></span>` : ''}
         </li>`; }).join('')}</ol>
-      ${EDIT && !PUBLIC ? `<button type="button" class="cart-pl-end" data-drop="pl:${pl.items.length}">${esc(T('pl_drop_end', 'Déposer ici pour ajouter à la fin'))}</button>` : ''}`;
-    host.querySelector('.cart-go').onclick = () => post('/pl/go', {});
-    host.querySelector('.cart-pl-prev').onclick = () => post('/pl/prev', {});
-    host.querySelector('.cart-pl-next').onclick = () => post('/pl/next', {});
-    host.querySelector('.cart-ab').onchange = e => post('/pl/options', {ab: e.target.checked});
-    host.querySelectorAll('[data-ho]').forEach(b => { b.onclick = () => post('/pl/options', {ab_handover: b.dataset.ho}); });
+      ${EDIT && !PUBLIC ? `<button type="button" class="cart-pl-end" data-drop="pl:${pl.items.length}@${esc(zid)}">${esc(T('pl_drop_end', 'Déposer ici pour ajouter à la fin'))}</button>` : ''}`;
+    host.querySelector('.cart-go').onclick = () => post('/pl/go', {zone: zid});
+    host.querySelector('.cart-pl-prev').onclick = () => post('/pl/prev', {zone: zid});
+    host.querySelector('.cart-pl-next').onclick = () => post('/pl/next', {zone: zid});
+    const opt = o => post('/pl/options', Object.assign({zone: zid}, o));
+    host.querySelector('.cart-ab').onchange = e => opt({ab: e.target.checked});
+    host.querySelectorAll('[data-ho]').forEach(b => { b.onclick = () => opt({ab_handover: b.dataset.ho}); });
     const hoMs = host.querySelector('.cart-ho-ms');
-    if (hoMs) hoMs.onchange = () => post('/pl/options', {ab_handover_ms: Math.round(Number(hoMs.value) || 0)});
-    host.querySelector('.cart-auto').onchange = e => post('/pl/options', {auto: e.target.checked});
-    host.querySelector('.cart-plloop').onchange = e => post('/pl/options', {loop: e.target.checked});
+    if (hoMs) hoMs.onchange = () => opt({ab_handover_ms: Math.round(Number(hoMs.value) || 0)});
+    host.querySelector('.cart-auto').onchange = e => opt({auto: e.target.checked});
+    host.querySelector('.cart-plloop').onchange = e => opt({loop: e.target.checked});
     const add = host.querySelector('.cart-pl-add');
-    if (add) add.onclick = () => openLibrary({playlist: true}, T('choose_for_pl', 'Ajouter à la playlist'));
+    if (add) add.onclick = () => openLibrary({playlist: true, zone: zid}, T('choose_for_pl', 'Ajouter à la playlist'));
     const end = host.querySelector('.cart-pl-end');
     if (end) {
-      end.onclick = () => { if (armed) dropMedia({kind: 'pl', index: pl.items.length}, armed);
+      end.onclick = () => { if (armed) dropMedia({kind: 'pl', index: pl.items.length, zone: zid}, armed);
         else TOAST(T('armed_none', 'Touchez d\'abord un média du panneau, ou glissez-le ici.'), 'info'); };
-      wireDrop(end, {kind: 'pl', index: pl.items.length});
+      wireDrop(end, {kind: 'pl', index: pl.items.length, zone: zid});
     }
     host.querySelectorAll('.cart-pl-row').forEach(row => {
       const id = row.dataset.item, idx = +row.dataset.index;
       row.querySelector('.cart-pl-pick').onclick = () => {
         if (PUBLIC) return;
-        if (EDIT && armed) { dropMedia({kind: 'pl', index: idx}, armed); return; }   // tap-tap: insert here
-        post('/pl/goto', {index: idx});
+        if (EDIT && armed) { dropMedia({kind: 'pl', index: idx, zone: zid}, armed); return; }   // tap-tap: insert here
+        post('/pl/goto', {index: idx, zone: zid});
       };
-      if (EDIT) wireDrop(row, {kind: 'pl', index: idx});
+      if (EDIT) wireDrop(row, {kind: 'pl', index: idx, zone: zid});
       row.querySelectorAll('[data-op]').forEach(b => {
         b.onclick = () => {
           const op = b.dataset.op;
@@ -978,9 +1114,9 @@
   function openSettings() {
     const box = $('.cart-settings');
     if (!box.hidden) { box.hidden = true; return; }
-    const s = DOC.settings, pg = curPage(), dfl = Object.assign({}, DEFAULTS0, DOC.defaults || {});
+    const z = Z(), s = DOC.settings, pg = curPage(), dfl = Object.assign({}, DEFAULTS0, DOC.defaults || {});
     const nPl = (S && S.n_players) || 2;
-    const pgName = pageLabel(pg, DOC.pages.indexOf(pg));
+    const pgName = pageLabel(pg, z.pages.indexOf(pg));
     box.hidden = false;
     box.innerHTML = `
       <div class="cart-panel-head"><strong>${esc(T('settings', 'Réglages'))}</strong>
@@ -1001,7 +1137,7 @@
         ${KEY_F.map(f => f === 'loop'
           ? `<label class="cart-field cart-field-sw"><span>${esc(lbl(f))}</span>${inputFor(f, dfl[f], nPl)}</label>`
           : field(lbl(f), inputFor(f, dfl[f], nPl))).join('')}
-        <label class="cart-field cart-field-sw"><span>${esc(T('dfl_auto', 'Enchaînement automatique (playlist)'))}</span><input type="checkbox" class="ctl-switch" name="pl_auto"${DOC.playlist.auto ? ' checked' : ''}></label>
+        <label class="cart-field cart-field-sw"><span>${esc(T('dfl_auto', 'Enchaînement automatique (playlist)'))}</span><input type="checkbox" class="ctl-switch" name="pl_auto"${z.playlist.auto ? ' checked' : ''}></label>
       </div>
       <div class="cart-form-acts"><span class="cart-spacer"></span><button type="button" class="cart-btn cart-primary cart-dfl-save">${esc(T('save_defaults', 'Enregistrer les défauts'))}</button></div>
       <h3 class="cart-h">${esc(T('sec_page_defaults', 'Défauts de la page « {p} »').replace('{p}', pgName))}</h3>
@@ -1011,14 +1147,15 @@
       </div>
       <div class="cart-form-acts"><span class="cart-spacer"></span><button type="button" class="cart-btn cart-primary cart-pdfl-save">${esc(T('save_page_defaults', 'Enregistrer les défauts de la page'))}</button></div>
 
-      <h3 class="cart-h">${esc(T('sec_grid', 'Grille et pages'))}</h3>
+      <h3 class="cart-h">${esc(T('sec_grid_zone', 'Grille et pages — {z}').replace('{z}', zoneLabel(z)))}</h3>
+      <p class="cart-note">${esc(T('zone_focus_help', 'Ces réglages valent pour la zone sélectionnée (la dernière touchée) ; touchez une autre zone pour la régler.'))}</p>
       <div class="cart-form">
-        ${field(T('cols', 'Colonnes'), `<input type="number" name="cols" min="1" max="12" value="${DOC.grid.cols}">`)}
-        ${field(T('rows', 'Rangées'), `<input type="number" name="rows" min="1" max="12" value="${DOC.grid.rows}">`)}
+        ${field(T('cols', 'Colonnes'), `<input type="number" name="cols" min="1" max="12" value="${z.grid.cols}">`)}
+        ${field(T('rows', 'Rangées'), `<input type="number" name="rows" min="1" max="12" value="${z.grid.rows}">`)}
         ${field(T('page_name', 'Nom de la page affichée'), `<input type="text" name="page_name" maxlength="40" value="${esc(pg.name)}" placeholder="${esc(pgName)}">`)}
       </div>
-      <p class="cart-note">${esc(T('pages_here', 'Pages ({n}) — la page en surbrillance est celle affichée ; touchez-en une pour l\'afficher :').replace('{n}', DOC.pages.length))}</p>
-      <div class="cart-pages cart-pages-set" role="tablist">${DOC.pages.map((p2, i) => `<button type="button" role="tab" class="cart-btn cart-page${p2.id === DOC.page ? ' is-on' : ''}" data-spage="${esc(p2.id)}" aria-selected="${p2.id === DOC.page}">${esc(pageLabel(p2, i))}</button>`).join('')}</div>
+      <p class="cart-note">${esc(T('pages_here', 'Pages ({n}) — la page en surbrillance est celle affichée ; touchez-en une pour l\'afficher :').replace('{n}', z.pages.length))}</p>
+      <div class="cart-pages cart-pages-set" role="tablist">${z.pages.map((p2, i) => `<button type="button" role="tab" class="cart-btn cart-page${p2.id === z.page ? ' is-on' : ''}" data-spage="${esc(p2.id)}" aria-selected="${p2.id === z.page}">${esc(pageLabel(p2, i))}</button>`).join('')}</div>
       <div class="cart-form-acts">
         <button type="button" class="cart-btn cart-pg-add">${esc(T('page_add', 'Ajouter une page'))}</button>
         <button type="button" class="cart-btn" data-pmove="-1">${esc(T('page_move_left', '← Déplacer la page'))}</button>
@@ -1042,29 +1179,29 @@
       const o = {};
       box.querySelectorAll('.cart-dfl-cart [data-f]').forEach(i => { o[i.dataset.f] = readInput(i); });
       const d = await post('/defaults', o);
-      if (d && v('pl_auto').checked !== !!DOC.playlist.auto) await post('/pl/options', {auto: v('pl_auto').checked});
+      if (d && v('pl_auto').checked !== !!z.playlist.auto) await post('/pl/options', {auto: v('pl_auto').checked, zone: z.id});
     };
     box.querySelector('.cart-pdfl-save').onclick = () =>
       post('/defaults', readInh(box.querySelector('.cart-dfl-page'), {page: pg.id}));
     box.querySelector('.cart-grid-save').onclick = async () => {
-      await post('/grid', {cols: +v('cols').value, rows: +v('rows').value});
+      await post('/grid', {cols: +v('cols').value, rows: +v('rows').value, zone: z.id});
       if (v('page_name').value !== pg.name) await post('/pages', {op: 'rename', page: pg.id, name: v('page_name').value});
     };
     // les gestes de page se VOIENT ici (2026-10-17) : la barre d'onglets est en haut de la grille, loin du panneau — on
     // ajoutait des pages sans rien voir bouger ; le panneau se redessine et l'onglet affiché est en surbrillance
     const pageOp = async (body, msg) => { const d = await post('/pages', body); if (d) { refreshSettings(); if (msg) TOAST(msg(), 'info'); } };
-    box.querySelector('.cart-pg-add').onclick = () => pageOp({op: 'add'}, () =>
-      T('page_added', 'Page ajoutée et affichée ({n} pages)').replace('{n}', DOC.pages.length));
-    box.querySelectorAll('[data-pmove]').forEach(b => { b.onclick = () => pageOp({op: 'move', page: DOC.page, delta: +b.dataset.pmove}); });
+    box.querySelector('.cart-pg-add').onclick = () => pageOp({op: 'add', zone: z.id}, () =>
+      T('page_added', 'Page ajoutée et affichée ({n} pages)').replace('{n}', Z().pages.length));
+    box.querySelectorAll('[data-pmove]').forEach(b => { b.onclick = () => pageOp({op: 'move', page: Z().page, delta: +b.dataset.pmove}); });
     box.querySelectorAll('[data-spage]').forEach(b => { b.onclick = async () => { if (await post('/page', {page: b.dataset.spage})) refreshSettings(); }; });
     box.querySelector('.cart-pg-del').onclick = () => {
-      if (box.dataset.confirm !== DOC.page) {
-        box.dataset.confirm = DOC.page;
+      if (box.dataset.confirm !== Z().page) {
+        box.dataset.confirm = Z().page;
         TOAST(T('confirm_page_delete', 'Appuyez encore pour supprimer la page et ses touches'), 'warning');
         return;
       }
       delete box.dataset.confirm;
-      pageOp({op: 'delete', page: DOC.page});
+      pageOp({op: 'delete', page: Z().page});
     };
     renderPlayersSetting(box.querySelector('.cart-players-set'), nPl);
   }
@@ -1324,7 +1461,7 @@
 
   let CE = null;
   const tb = () => CE.t.key ? {key: CE.t.key} : {item: CE.t.item};
-  const findKeyDoc = id => { for (const p of DOC.pages) { const k = p.keys.find(x => x.id === id); if (k) return {k, p}; } return null; };
+  const findKeyDoc = id => { for (const p of allPages()) { const k = p.keys.find(x => x.id === id); if (k) return {k, p}; } return null; };
   async function jget(p) {
     const r = await fetch(api(p), {cache: 'no-store'});
     const d = await r.json().catch(() => ({}));
@@ -1340,7 +1477,7 @@
 
   function openClipEditor(t) {
     if (PUBLIC || !DOC) return;
-    const it = t.key ? (findKeyDoc(t.key) || {}).k : DOC.playlist.items.find(x => x.id === t.item);
+    const it = t.key ? (findKeyDoc(t.key) || {}).k : ((zoneOfItem(t.item) || {playlist: {items: []}}).playlist.items.find(x => x.id === t.item));
     if (!it) return;
     clipClose(true);
     const draft = {edit: it.edit ? clone(it.edit) : EDIT0(), gain_db: it.gain_db || 0,
@@ -1903,14 +2040,14 @@
     if (PUBLIC) return;
     const box = $('.cart-saves');
     if (!box.hidden) { box.hidden = true; return; }
-    SV = {kind: null, confirm: null, report: null, lists: {}, sig: DOC ? DOC.mode + '|' + DOC.page : null};
+    SV = {kind: null, confirm: null, report: null, lists: {}, sig: DOC ? Z().id + '|' + Z().mode + '|' + Z().page : null};
     box.hidden = false;
     svRefresh();
   }
   async function svRefresh() {
     const box = $('.cart-saves');
     if (!box || box.hidden || !DOC) return;
-    const kinds = DOC.mode === 'playlist' ? ['playlist'] : ['grid', 'page'];
+    const kinds = Z().mode === 'playlist' ? ['playlist'] : ['grid', 'page'];
     await Promise.all(kinds.map(svLoad));
     svPaint();
   }
@@ -1918,9 +2055,9 @@
     const box = $('.cart-saves');
     if (!box || box.hidden || !DOC) return;
     const op = canOperate();
-    const pg = curPage();
-    const pgName = pageLabel(pg, DOC.pages.indexOf(pg));
-    const kinds = DOC.mode === 'playlist' ? ['playlist'] : ['grid', 'page'];
+    const z = Z(), pg = curPage();
+    const pgName = pageLabel(pg, z.pages.indexOf(pg));
+    const kinds = z.mode === 'playlist' ? ['playlist'] : ['grid', 'page'];
     const saveLbl = {grid: T('sv_save_grid', 'Enregistrer la grille sous…'),
                      playlist: T('sv_save_playlist', 'Enregistrer la playlist sous…'),
                      page: T('sv_save_page', 'Enregistrer cette page sous…')};
@@ -1951,6 +2088,7 @@
       <div class="cart-panel-head"><strong>${esc(T('sv_title', 'Sauvegardes'))}</strong>
         <span class="cart-spacer"></span>
         <button type="button" class="cart-btn cart-sv-close">${esc(T('close', 'Fermer'))}</button></div>
+      <p class="cart-note"><strong>${esc(T('sv_zone', 'Zone : {z}').replace('{z}', zoneLabel(z)))}</strong></p>
       <p class="cart-note">${esc(T('sv_hint', 'Bibliothèque commune à l\'installation : rappelable depuis tout cartouchier. Un rappel ne coupe rien : ce qui joue continue jusqu\'au bout.'))}</p>
       ${SV.report ? `<div class="cart-sv-report" role="status">${SV.report}</div>` : ''}
       ${kinds.map(kind => `
@@ -1981,7 +2119,7 @@
   function svFollow() {
     const box = $('.cart-saves');
     if (!box || box.hidden || !DOC) return;
-    const sig = DOC.mode + '|' + DOC.page;
+    const sig = Z().id + '|' + Z().mode + '|' + Z().page;
     if (SV.sig === sig) return;
     const first = SV.sig == null;
     SV.sig = sig;
@@ -2011,18 +2149,18 @@
     }
     if (what === 'recall' || what === 'add') {
       const pg = curPage();
-      const pgName = pageLabel(pg, DOC.pages.indexOf(pg));
+      const pgName = pageLabel(pg, Z().pages.indexOf(pg));
       const text = sv.kind === 'grid' ? T('sv_confirm_grid', 'Remplacer toute la grille par « {n} » ? Ce qui joue continue.')
         : sv.kind === 'playlist' ? T('sv_confirm_playlist', 'Remplacer la playlist par « {n} » ? Ce qui joue continue.')
         : what === 'add' ? T('sv_confirm_add', 'Ajouter « {n} » comme nouvelle page ?')
         : T('sv_confirm_page', 'Remplacer la page « {p} » par « {n} » ? Ce qui joue continue.').replace('{p}', pgName);
-      const body = sv.kind === 'page' ? (what === 'add' ? {add: true} : {page: pg.id}) : {};
+      const body = Object.assign({zone: Z().id}, sv.kind === 'page' ? (what === 'add' ? {add: true} : {page: pg.id}) : {});
       SV.confirm = {id: sv.id, text: text.replace('{n}', sv.name), yes: T('sv_recall', 'Rappeler'), run: () => svRecall(sv, body)};
       return svPaint();
     }
   }
   async function svSave(kind, name, overwrite) {
-    const body = {kind, name, overwrite};
+    const body = {kind, name, overwrite, zone: Z().id};
     if (kind === 'page') body.page = curPage().id;
     const res = await svJson('POST', '/api/containers/' + VMID + '/library', body);
     if (res.status === 409 && res.data.error === 'name_taken' && !overwrite) {
@@ -2092,17 +2230,201 @@
     await svRefresh();
   }
 
+  // ── layout editor (0.1.8): construction mode only, like the console ──
+  // One panel for the tab on screen: its name, its layout (four pictures), and per slot the zone it
+  // holds (one of the tab's, or a new one), its name, its kind and its players (44 px chips; a player
+  // of another tab's zone is shown taken, with that zone's name). Applied in ONE call (/layout):
+  // refused whole, never half-applied. Zones the tab drops are deleted — said before applying.
+  let LE = null;
+  const KIND_LABEL_Z = {grid: () => T('kind_grid', 'Grille'), playlist: () => T('kind_playlist', 'Playlist'),
+                        playlist_ab: () => T('kind_playlist_ab', 'Playlist A/B')};
+  const LAYOUT_LABEL = {'1': () => T('layout_1', '1 zone'), '2h': () => T('layout_2h', '2 côte à côte'),
+                        '2v': () => T('layout_2v', '2 empilées'), '1+2': () => T('layout_1_2', '1 + 2')};
+  function openLayoutEditor(fresh) {
+    if (PUBLIC || !DOC) return;
+    const box = $('.cart-layout-ed');
+    if (!box.hidden && !fresh) { box.hidden = true; LE = null; return; }
+    const t = shownTab();
+    if (!t) return;
+    LE = {tab: t.id, name: t.name, layout: t.layout, confirm: false,
+          slots: t.zones.map(zid => { const z = zoneById(zid); return {zone: zid, name: z.name, kind: zoneKind(z), players: z.players.slice()}; })};
+    box.hidden = false;
+    lePaint();
+    if (box.scrollIntoView) box.scrollIntoView({block: 'nearest'});
+  }
+  function leOwner(n) {
+    // the zone (of ANOTHER tab) holding player n, unless that zone is being moved here
+    const kept = new Set(LE.slots.map(s => s.zone).filter(Boolean));
+    for (const t of DOC.tabs) {
+      if (t.id === LE.tab) continue;
+      for (const zid of t.zones) {
+        if (kept.has(zid)) continue;
+        const z = zoneById(zid);
+        if (z && z.players.indexOf(n) >= 0) return {z, t};
+      }
+    }
+    return null;
+  }
+  function lePaint() {
+    const box = $('.cart-layout-ed');
+    if (!box || box.hidden || !LE) return;
+    const t = DOC.tabs.find(x => x.id === LE.tab);
+    if (!t) { box.hidden = true; LE = null; return; }
+    const nPl = (S && S.n_players) || 2;
+    const tabZones = t.zones.map(zoneById).filter(Boolean);
+    const dropped = t.zones.filter(zid => !LE.slots.some(s => s.zone === zid)).map(zoneById).filter(Boolean);
+    const slotHtml = (s, i) => `
+      <div class="cart-le-slot" data-slot="${i}">
+        <div class="cart-le-slot-head"><strong>${esc(T('slot_n', 'Emplacement {n}').replace('{n}', i + 1))}</strong></div>
+        <label class="cart-field"><span>${esc(T('slot_zone', 'Zone'))}</span><select class="cart-le-zone">
+          ${tabZones.map(z => `<option value="${esc(z.id)}"${s.zone === z.id ? ' selected' : ''}>${esc(zoneLabel(z))}</option>`).join('')}
+          <option value=""${!s.zone ? ' selected' : ''}>${esc(T('zone_new', 'Nouvelle zone'))}</option></select></label>
+        <label class="cart-field"><span>${esc(T('zone_name', 'Nom de la zone'))}</span>
+          <input type="text" class="cart-le-name" maxlength="40" value="${esc(s.name || '')}" placeholder="${esc(T('zone_name_ph', 'ex. Invité A'))}"></label>
+        <div class="cart-field"><span>${esc(T('zone_kind', 'Contenu'))}</span>
+          <span class="cart-seg" role="group">${KINDS.map(k => `<button type="button" class="cart-btn${s.kind === k ? ' is-on' : ''}" data-kind="${k}" aria-pressed="${s.kind === k}">${esc(KIND_LABEL_Z[k]())}</button>`).join('')}</span></div>
+        <div class="cart-field"><span>${esc(T('zone_players', 'Lecteurs'))}</span>
+          <span class="cart-le-players">${Array.from({length: nPl}, (_, j) => j + 1).map(n => {
+            const own = leOwner(n), on = s.players.indexOf(n) >= 0;
+            const tip = own ? T('player_taken_by', 'Lecteur {n} — zone « {z} » (onglet « {t} »)').replace('{n}', n)
+              .replace('{z}', zoneLabel(own.z)).replace('{t}', tabLabel(own.t, DOC.tabs.indexOf(own.t))) : '';
+            return `<button type="button" class="cart-btn cart-le-pl${on ? ' is-on' : ''}" data-pl="${n}" aria-pressed="${on}"${own ? ` disabled title="${esc(tip)}"` : ''}>${esc(T('player_short', 'L'))}${n}</button>`;
+          }).join('')}</span></div>
+        ${s.kind === 'playlist_ab' ? `<p class="cart-note">${esc(T('ab_first_two', 'A/B : les deux premiers lecteurs choisis.'))}</p>` : ''}
+      </div>`;
+    box.innerHTML = `
+      <div class="cart-panel-head"><strong>${esc(T('layout_edit', 'Disposition de l\'onglet…'))}</strong>
+        <span class="cart-spacer"></span>
+        <button type="button" class="cart-btn cart-le-close">${esc(T('close', 'Fermer'))}</button></div>
+      <div class="cart-form">
+        <label class="cart-field"><span>${esc(T('tab_name', 'Nom de l\'onglet'))}</span>
+          <input type="text" class="cart-le-tabname" maxlength="40" value="${esc(LE.name || '')}" placeholder="${esc(tabLabel({}, DOC.tabs.indexOf(t)))}"></label>
+      </div>
+      <div class="cart-field"><span>${esc(T('layout', 'Disposition'))}</span>
+        <span class="cart-le-layouts" role="group">${Object.keys(LAYOUT_SLOTS).map(l => `<button type="button" class="cart-btn cart-le-layout${LE.layout === l ? ' is-on' : ''}" data-layout="${l}" aria-pressed="${LE.layout === l}">
+          <span class="cart-le-pic" data-pic="${l}" aria-hidden="true">${'<i></i>'.repeat(LAYOUT_SLOTS[l])}</span>${esc(LAYOUT_LABEL[l]())}</button>`).join('')}</span></div>
+      <div class="cart-le-slots" data-layout="${LE.layout}">${LE.slots.map(slotHtml).join('')}</div>
+      ${dropped.length ? `<p class="cart-sv-miss" role="alert">${esc(T('zones_dropped', 'Seront supprimées avec leur contenu : {z}').replace('{z}', dropped.map(zoneLabel).join(', ')))}</p>` : ''}
+      <div class="cart-form-acts">
+        <button type="button" class="cart-btn" data-tmove="-1">${esc(T('tab_move_left', '← Déplacer l\'onglet'))}</button>
+        <button type="button" class="cart-btn" data-tmove="1">${esc(T('tab_move_right', 'Déplacer l\'onglet →'))}</button>
+        <button type="button" class="cart-btn cart-danger cart-le-del">${esc(LE.confirm ? T('tab_delete_confirm', 'Confirmer la suppression') : T('tab_delete', 'Supprimer l\'onglet'))}</button>
+        <span class="cart-spacer"></span>
+        <button type="button" class="cart-btn cart-primary cart-le-apply">${esc(T('layout_apply', 'Appliquer'))}</button>
+      </div>`;
+    box.querySelector('.cart-le-close').onclick = () => { box.hidden = true; LE = null; };
+    box.querySelector('.cart-le-tabname').oninput = ev => { LE.name = ev.target.value; };
+    box.querySelectorAll('[data-layout]').forEach(b => { if (b.classList.contains('cart-le-layout')) b.onclick = () => {
+      LE.layout = b.dataset.layout; LE.slots = resizeSlots(LE.slots, LE.layout); lePaint(); }; });
+    box.querySelectorAll('.cart-le-slot').forEach(el => {
+      const s = LE.slots[+el.dataset.slot];
+      el.querySelector('.cart-le-zone').onchange = ev => {
+        const zid = ev.target.value || null, z = zoneById(zid);
+        // a zone is in ONE slot: picked here, it leaves the slot that held it
+        LE.slots.forEach(o => { if (o !== s && zid && o.zone === zid) o.zone = null; });
+        Object.assign(s, z ? {zone: z.id, name: z.name, kind: zoneKind(z), players: z.players.slice()} : {zone: null, name: '', kind: 'grid', players: []});
+        lePaint();
+      };
+      el.querySelector('.cart-le-name').oninput = ev => { s.name = ev.target.value; };
+      el.querySelectorAll('[data-kind]').forEach(b => { b.onclick = () => { s.kind = b.dataset.kind; lePaint(); }; });
+      el.querySelectorAll('[data-pl]').forEach(b => { b.onclick = () => {
+        const n = +b.dataset.pl, i = s.players.indexOf(n);
+        if (i >= 0) s.players.splice(i, 1);
+        else { LE.slots.forEach(o => { const j = o.players.indexOf(n); if (o !== s && j >= 0) o.players.splice(j, 1); }); s.players.push(n); }
+        lePaint();
+      }; });
+    });
+    box.querySelectorAll('[data-tmove]').forEach(b => { b.onclick = () => post('/tabs', {op: 'move', tab: LE.tab, delta: +b.dataset.tmove}); });
+    box.querySelector('.cart-le-del').onclick = async () => {
+      if (!LE.confirm) { LE.confirm = true; lePaint(); return; }
+      const d = await post('/tabs', {op: 'delete', tab: LE.tab});
+      if (d) { box.hidden = true; LE = null; }
+    };
+    box.querySelector('.cart-le-apply').onclick = async () => {
+      const err = layoutCheck(DOC, LE.tab, LE.slots);
+      if (err) { TOAST(T('err_' + err.code, err.code), 'warning'); return; }
+      if ((LE.name || '') !== (t.name || '')) await post('/tabs', {op: 'rename', tab: LE.tab, name: LE.name || ''});
+      const d = await post('/layout', {tab: LE.tab, layout: LE.layout,
+        slots: LE.slots.map(s => ({zone: s.zone || undefined, name: s.name || '', kind: s.kind, players: s.players}))});
+      if (d) { box.hidden = true; LE = null; TOAST(T('layout_applied', 'Disposition appliquée'), 'info'); }
+    };
+  }
+
   // ── main render + poll ──
+  // The tab on screen is a LAYOUT of slots, each holding a zone. The slots are rebuilt only when the
+  // tab, its layout or the document changes; inside, each zone is re-rendered only when what it
+  // shows changed (its signature) — a key that starts in zone A does not rebuild zone B.
+  function zoneSig(z) {
+    const ps = ((S && S.players) || []).filter(p => p.zone === z.id || p.from_zone === z.id)
+      .map(p => [p.player, p.state, p.key, p.origin]);
+    const zv = zoneView(z.id) || {};
+    const pg = pageOf(z);
+    const km = {}, im = {};
+    const media = (S && S.key_media) || {}, imedia = (S && S.item_media) || {};
+    if (z.mode === 'playlist') z.playlist.items.forEach(it => { im[it.id] = imedia[it.id]; });
+    else pg.keys.forEach(k => { km[k.id] = media[k.id]; });
+    return JSON.stringify([DOC_REV, EDIT, !!armed, z.id === ZID, pg.id, ps, zv.playlist, km, im]);
+  }
+  function renderZone(el, z) {
+    const zv = zoneView(z.id) || {};
+    el.classList.toggle('is-focus', z.id === ZID && !PUBLIC);
+    el.dataset.kind = zoneKind(z);
+    el.innerHTML = `
+      <div class="cart-zone-head">
+        <strong class="cart-zone-name">${esc(zoneLabel(z))}</strong>
+        <span class="cart-zone-kind">${esc(KIND_LABEL_Z[zoneKind(z)]())}</span>
+        <span class="cart-zone-pl">${z.players.length ? z.players.map(n => esc(T('player_short', 'L')) + n).join(' ') : esc(T('zone_no_player', 'aucun lecteur'))}</span>
+        ${zv.playing ? `<span class="cart-dot is-on" aria-label="${esc(T('zone_playing', 'en lecture'))}"></span>` : ''}
+        <span class="cart-spacer"></span>
+        ${z.mode === 'playlist' ? '' : zonePagesHtml(z)}
+      </div>
+      <div class="cart-zone-body"></div>`;
+    el.querySelectorAll('[data-page]').forEach(b => { b.onclick = () => {
+      if (PUBLIC) { PUB_PAGE[z.id] = b.dataset.page; zoneSigs[z.id] = ''; renderMain(); return; }
+      post('/page', {page: b.dataset.page});
+    }; });
+    const body = el.querySelector('.cart-zone-body');
+    if (z.mode === 'playlist') renderPlaylist(body, z); else renderGrid(body, z);
+  }
+  function focusZone(zid) {
+    if (ZID === zid) return;
+    ZID = zid;
+    if (!EL) return;
+    EL.querySelectorAll('.cart-zone').forEach(x => x.classList.toggle('is-focus', x.dataset.zone === ZID && !PUBLIC));
+    svFollow();
+    const st = $('.cart-settings');
+    if (st && !st.hidden) refreshSettings();
+  }
   function renderMain() {
     if (!EL || !DOC) return;
     renderBar();
     const host = $('.cart-main');
-    if (DOC.mode === 'playlist') renderPlaylist(host); else renderGrid(host);
+    const t = shownTab();
+    if (!t) {
+      host.innerHTML = `<p class="cart-note">${esc(T('tab_gone', 'L\'onglet partagé par ce lien n\'existe plus.'))}</p>`;
+      layoutSig = ''; zoneSigs = {};
+      return;
+    }
+    if (!zoneById(ZID) || t.zones.indexOf(ZID) < 0) ZID = t.zones[0];
+    const lsig = JSON.stringify([t.id, t.layout, t.zones, DOC_REV, EDIT]);
+    if (lsig !== layoutSig) {
+      host.innerHTML = `<div class="cart-layout" data-layout="${esc(t.layout)}">${t.zones.map(zid =>
+        `<section class="cart-zone" data-zone="${esc(zid)}"></section>`).join('')}</div>`;
+      host.querySelectorAll('.cart-zone').forEach(el => {
+        el.addEventListener('pointerdown', () => focusZone(el.dataset.zone), true);
+      });
+      layoutSig = lsig; zoneSigs = {};
+    }
+    t.zones.forEach(zid => {
+      const z = zoneById(zid), el = host.querySelector(`.cart-zone[data-zone="${zid}"]`);
+      if (!z || !el) return;
+      const sig = zoneSig(z);
+      if (zoneSigs[zid] !== sig) { zoneSigs[zid] = sig; renderZone(el, z); }
+    });
     svFollow();
     if (!raf) raf = requestAnimationFrame(frame);
   }
 
-  let _sig = '';
   async function poll() {
     if (!EL) return;
     let st;
@@ -2110,19 +2432,19 @@
     if (!EL) return;
     EL.classList.remove('is-offline');
     S = st; S_AT = performance.now();
+    let docChanged = false;
     if (st.doc_rev !== DOC_REV || !DOC) {
-      try { DOC = await get('/doc'); DOC_REV = st.doc_rev; } catch (e) { return; }
+      try { DOC = await get('/doc'); DOC_REV = st.doc_rev; docChanged = true; } catch (e) { return; }
     }
     renderPlayers();
     listenPaint();
-    // Re-render the grid / playlist only when something it shows has changed — not every 250 ms,
-    // which would eat taps on a slow tablet. Never during a pointer drag: it would drop the target.
-    const sig = JSON.stringify([DOC_REV, EDIT, st.players.map(p => [p.player, p.state, p.key, p.origin]),
-      st.playlist, st.key_media, st.item_media]);
-    // nor while the A/B fade duration is being typed (a re-render would drop the digits)
+    paintDots();
+    if (docChanged && LE) lePaint();
+    // Re-render only the zones whose content changed (renderMain compares per zone) — never during
+    // a pointer drag (it would drop the target), nor while the A/B fade duration is being typed.
     const typing = document.activeElement && document.activeElement.classList
       && document.activeElement.classList.contains('cart-ho-ms');
-    if (sig !== _sig && !PD && !typing) { _sig = sig; renderMain(); }
+    if (!PD && !typing) renderMain();
     if (!raf) raf = requestAnimationFrame(frame);
   }
 
@@ -2131,6 +2453,9 @@
     TOAST = (ctx && ctx.toast) || (() => {});
     BASE = (ctx && ctx.base) || null;
     PUBLIC = !!BASE;
+    // the public link's scope (0.1.8): the tab it shares, and whether it may play it
+    PUB_TAB = (PUBLIC && ctx && ctx.tab) || null;
+    PUB_PLAY = !!(PUBLIC && ctx && ctx.play && PUB_TAB);
     skeleton();
     listenMount();
     document.addEventListener('ml:uploaded', onUploaded);
@@ -2148,10 +2473,12 @@
     if (lib && lib.destroy) { try { lib.destroy(); } catch (e) { /* already gone */ } }
     lib = null; EL = null; VMID = null; BASE = null; PUBLIC = false; S = null; DOC = null; DOC_REV = -1;
     EDIT = false; armed = null; libTarget = null; editing = null;
-    _sig = '';
+    PUB_TAB = null; PUB_PLAY = false; ZID = null; zoneSigs = {}; layoutSig = ''; LE = null;
+    Object.keys(PUB_PAGE).forEach(k => { delete PUB_PAGE[k]; });
   }
 
   if (typeof window === 'undefined') return;
   window.MXLPlugins = window.MXLPlugins || {};
-  window.MXLPlugins.cartouchier = {mount, unmount, _pure: {effectiveOf, matchUpload, parseDrop, DEFAULTS0, srcToMix, mixToSrc, envDbAt}};
+  window.MXLPlugins.cartouchier = {mount, unmount, _pure: {effectiveOf, matchUpload, parseDrop, DEFAULTS0, srcToMix, mixToSrc, envDbAt,
+    postAllowed, tabToShow, zoneKind, resizeSlots, layoutCheck, PUBLIC_PATHS}};
 })();

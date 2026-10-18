@@ -1,7 +1,15 @@
 {
-  "version": "0.1.7",
+  "version": "0.1.8",
   "date": "2026-10-18",
   "changes": {
+    "Onglets et zones (0.1.8)": [
+      "★ Onglets : le cartouchier se range en onglets que l'on crée (« + Onglet », en Édition), nomme, déplace et supprime. Un point s'allume sur un onglet quand un de ses lecteurs joue ; les lecteurs d'un onglet caché continuent de jouer.",
+      "★ Disposition par onglet : 1 zone, 2 côte à côte, 2 empilées, 1 + 2 ; les zones côte à côte s'empilent sur écran étroit (téléphone, iPad en portrait). Chaque emplacement porte une ZONE : grille, playlist (un lecteur) ou playlist A/B (deux lecteurs, son propre passage A/B), avec sa propre grille (colonnes, rangées, pages, touches) ou sa propre playlist, et ses lecteurs. Un lecteur appartient à une seule zone.",
+      "« Disposition de l'onglet… » (Édition seulement) : nom de l'onglet, disposition, et par emplacement la zone, son nom, son contenu et ses lecteurs ; refusé en entier (et dit dans la page) si un lecteur est pris par une zone d'un autre onglet, choisi deux fois, ou si une A/B a moins de deux lecteurs. Les zones non gardées sont supprimées, ce qui joue continue.",
+      "Migration sans réenregistrement : un cartouchier d'avant (un mode, une grille, une playlist) se lit comme UN onglet, UNE zone qui possède tous les lecteurs — même comportement. Document version 3.",
+      "Macros et liens : zone FACULTATIVE sur les actions de playlist, de page, de mode, « tout arrêter » et les rappels (sans zone : zone par défaut de son genre, donc les macros et liens de fader start d'avant agissent comme avant) ; nouvelles actions « afficher un onglet », suivant, précédent, « passer une zone en grille / playlist / A/B » ; listes vivantes /zones et /tabs ; arbre de paramètres PAR ZONE (par identifiant : passage A/B, durée, enchaînement, boucle) ; états onglet affiché. Sauvegardes et rappels par zone.",
+      "★ Page publique d'UN onglet : le lien montre l'onglet choisi (lecteurs, touches, playlist, états en direct). Lecture seule par défaut ; un lien créé avec « Autoriser à jouer cet onglet » permet de lancer / arrêter les touches, GO, lancer / arrêter les lecteurs de cet onglet — le conteneur refuse (403) toute action hors de l'onglet ou hors de cette liste."
+    ],
     "Playlist A/B : sort de l'autre lecteur au lancement (0.1.7)": [
       "Nouveau réglage de la playlist, à côté du mode A/B : quand on lance l'élément suivant, l'élément qui joue sur l'autre lecteur est laissé jouer (par défaut), coupé aussitôt (sans clic) ou effacé par un fondu de durée réglable (0 à 30 000 ms). Avant, il partait toujours avec son propre fondu.",
       "« Laisser jouer » : les deux lecteurs jouent ensemble ; l'opérateur arrête l'ancien (fader start à la fermeture du fader, mute, arrêt). L'élément suivant se prépare sur ce lecteur dès qu'il se libère. Si les deux lecteurs jouent encore au GO suivant, le GO prend celui qui n'est pas à l'antenne et son son s'efface avec son propre fondu (le lecteur est libre aussitôt).",
