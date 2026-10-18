@@ -320,5 +320,10 @@
   "plugin.cartouchier.shape_eq": "Puissance constante",
   "plugin.cartouchier.shape_exp": "Exponentielle",
   "plugin.cartouchier.shape_lin": "Linéaire",
-  "plugin.cartouchier.shape_s": "En S"
+  "plugin.cartouchier.shape_s": "En S",
+  "plugin.cartouchier.ho_title": "Au lancement, l'autre lecteur :",
+  "plugin.cartouchier.ho_keep": "Laisser jouer",
+  "plugin.cartouchier.ho_cut": "Couper",
+  "plugin.cartouchier.ho_fade": "Fondu",
+  "plugin.cartouchier.ho_ms": "ms"
 }

@@ -122,11 +122,16 @@ default becomes inherited, a different one stays customised.
 
 In **Playlist** mode the list is numbered. The item on air shows **ON AIR**, the next one **READY**.
 
-- **GO** puts the ready item on air and fades what was on air, with its own fade.
+- **GO** puts the ready item on air. Outside A/B, what was on air fades with its own fade; in A/B,
+  the setting below decides.
 - ◀ **Previous** / ▶ **Next** move the ready item without touching what is on air.
 - Tapping a row makes it ready.
 - **A/B**: two players alternate. A plays, B holds the next item loaded; at GO they swap. It needs at
   least two players.
+  **On launch, the other player**: **Keep playing** (default — the previous item goes on until you
+  stop it: fader close with fader start, mute, or stop), **Cut** (at once, without a click) or
+  **Fade** (duration in ms). If both players are still playing at the next GO, GO takes the one that
+  is not on air: its sound fades out with its own fade.
 - **Auto advance**: the items follow one another by themselves.
 - **Loop the list**: after the last item, back to the first.
 
@@ -365,12 +370,12 @@ Actions:
 
 The lists of keys, pages, items and saves are live.
 
-Readable states: players playing; title and time left of what is playing; mode; page shown; A/B;
-item on air (number and title) and item ready; state, time left and title of players 1 and 2; state
+Readable states: players playing; title and time left of what is playing; mode; page shown; A/B
+and what becomes of the other player on launch (and the fade duration); item on air (number and title) and item ready; state, time left and title of players 1 and 2; state
 and title of the pre-listen.
 
-In the parameter tree: the levels (normalisation, target, maximum gain, alert threshold) and the key
-defaults. Hardware surfaces and Ember+ go through these actions and states, as for any plugin.
+In the parameter tree: the levels (normalisation, target, maximum gain, alert threshold), the key
+defaults and, for the A/B playlist, what becomes of the other player on launch and its fade duration. Hardware surfaces and Ember+ go through these actions and states, as for any plugin.
 
 ## For integrators
 

@@ -1,7 +1,12 @@
 {
-  "version": "0.1.6",
+  "version": "0.1.7",
   "date": "2026-10-18",
   "changes": {
+    "Playlist A/B : sort de l'autre lecteur au lancement (0.1.7)": [
+      "Nouveau réglage de la playlist, à côté du mode A/B : quand on lance l'élément suivant, l'élément qui joue sur l'autre lecteur est laissé jouer (par défaut), coupé aussitôt (sans clic) ou effacé par un fondu de durée réglable (0 à 30 000 ms). Avant, il partait toujours avec son propre fondu.",
+      "« Laisser jouer » : les deux lecteurs jouent ensemble ; l'opérateur arrête l'ancien (fader start à la fermeture du fader, mute, arrêt). L'élément suivant se prépare sur ce lecteur dès qu'il se libère. Si les deux lecteurs jouent encore au GO suivant, le GO prend celui qui n'est pas à l'antenne et son son s'efface avec son propre fondu (le lecteur est libre aussitôt).",
+      "Macros : arbre de paramètres « Playlist A/B » (ab_handover, ab_handover_ms) ; états lisibles. Le réglage est porté par les sauvegardes de playlist."
+    ],
     "Fader start : le lecteur lancé joue ce qu'il tient (0.1.6)": [
       "« Lecteur : jouer » sur un lecteur qui tient un élément de playlist prêt lance CET élément sur CE lecteur ; avant, il déclenchait un GO de playlist qui lançait l'élément tenu par l'autre lecteur A/B. L'autre lecteur reprend ensuite l'élément qui suit."
     ],

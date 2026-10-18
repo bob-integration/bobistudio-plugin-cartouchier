@@ -320,5 +320,10 @@
   "plugin.cartouchier.shape_eq": "Equal power",
   "plugin.cartouchier.shape_exp": "Exponential",
   "plugin.cartouchier.shape_lin": "Linear",
-  "plugin.cartouchier.shape_s": "S-curve"
+  "plugin.cartouchier.shape_s": "S-curve",
+  "plugin.cartouchier.ho_title": "On launch, the other player:",
+  "plugin.cartouchier.ho_keep": "Keep playing",
+  "plugin.cartouchier.ho_cut": "Cut",
+  "plugin.cartouchier.ho_fade": "Fade",
+  "plugin.cartouchier.ho_ms": "ms"
 }

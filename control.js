@@ -838,6 +838,18 @@
   }
 
   // ── playlist ──
+  // A/B handover (0.1.7): what becomes of the item still playing on the other player when the next
+  // one is launched — keep playing (default), cut, or fade over N ms. Three buttons, the duration
+  // only when "fade" is chosen.
+  function handoverHtml(pl) {
+    const mode = pl.ab_handover || 'keep', dis = PUBLIC ? ' disabled' : '';
+    const b = (m, label) => `<button type="button" class="cart-btn${mode === m ? ' is-on' : ''}" data-ho="${m}" aria-pressed="${mode === m}"${dis}>${esc(label)}</button>`;
+    return `<span class="cart-ho"><span class="cart-ho-l">${esc(T('ho_title', 'Au lancement, l\'autre lecteur :'))}</span>
+      <span class="cart-seg" role="group" aria-label="${esc(T('ho_title', 'Au lancement, l\'autre lecteur :'))}">
+        ${b('keep', T('ho_keep', 'Laisser jouer'))}${b('cut', T('ho_cut', 'Couper'))}${b('fade', T('ho_fade', 'Fondu'))}</span>
+      ${mode === 'fade' ? `<label class="cart-ho-msl"><input type="number" class="cart-ho-ms" min="0" max="30000" step="100" inputmode="numeric" value="${Number(pl.ab_handover_ms) || 0}"${dis}> ${esc(T('ho_ms', 'ms'))}</label>` : ''}</span>`;
+  }
+
   function renderPlaylist(host) {
     const pl = DOC.playlist;
     const v = (S && S.playlist) || {};
@@ -848,6 +860,7 @@
         <button type="button" class="cart-btn cart-pl-prev"${PUBLIC ? ' disabled' : ''} aria-label="${esc(T('pl_prev', 'Précédent'))}">◀</button>
         <button type="button" class="cart-btn cart-pl-next"${PUBLIC ? ' disabled' : ''} aria-label="${esc(T('pl_next', 'Suivant'))}">▶</button>
         <label class="cart-sw"><input type="checkbox" class="ctl-switch cart-ab"${pl.ab ? ' checked' : ''}${PUBLIC || ((S && S.n_players) || 2) < 2 ? ' disabled' : ''}> ${esc(T('ab', 'A/B'))}</label>
+        ${pl.ab ? handoverHtml(pl) : ''}
         <label class="cart-sw"><input type="checkbox" class="ctl-switch cart-auto"${pl.auto ? ' checked' : ''}${PUBLIC ? ' disabled' : ''}> ${esc(T('auto', 'Enchaînement auto'))}</label>
         <label class="cart-sw"><input type="checkbox" class="ctl-switch cart-plloop"${pl.loop ? ' checked' : ''}${PUBLIC ? ' disabled' : ''}> ${esc(T('pl_loop', 'Boucler la liste'))}</label>
         <span class="cart-spacer"></span>
@@ -878,6 +891,9 @@
     host.querySelector('.cart-pl-prev').onclick = () => post('/pl/prev', {});
     host.querySelector('.cart-pl-next').onclick = () => post('/pl/next', {});
     host.querySelector('.cart-ab').onchange = e => post('/pl/options', {ab: e.target.checked});
+    host.querySelectorAll('[data-ho]').forEach(b => { b.onclick = () => post('/pl/options', {ab_handover: b.dataset.ho}); });
+    const hoMs = host.querySelector('.cart-ho-ms');
+    if (hoMs) hoMs.onchange = () => post('/pl/options', {ab_handover_ms: Math.round(Number(hoMs.value) || 0)});
     host.querySelector('.cart-auto').onchange = e => post('/pl/options', {auto: e.target.checked});
     host.querySelector('.cart-plloop').onchange = e => post('/pl/options', {loop: e.target.checked});
     const add = host.querySelector('.cart-pl-add');
@@ -2103,7 +2119,10 @@
     // which would eat taps on a slow tablet. Never during a pointer drag: it would drop the target.
     const sig = JSON.stringify([DOC_REV, EDIT, st.players.map(p => [p.player, p.state, p.key, p.origin]),
       st.playlist, st.key_media, st.item_media]);
-    if (sig !== _sig && !PD) { _sig = sig; renderMain(); }
+    // nor while the A/B fade duration is being typed (a re-render would drop the digits)
+    const typing = document.activeElement && document.activeElement.classList
+      && document.activeElement.classList.contains('cart-ho-ms');
+    if (sig !== _sig && !PD && !typing) { _sig = sig; renderMain(); }
     if (!raf) raf = requestAnimationFrame(frame);
   }
 

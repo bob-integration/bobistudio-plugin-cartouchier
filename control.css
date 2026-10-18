@@ -84,6 +84,11 @@
 
 /* ── playlist ── */
 .cart-pl-bar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.cart-ho { display: inline-flex; flex-wrap: wrap; align-items: center; gap: var(--space-1); }
+.cart-ho-l { font-size: .9em; color: var(--text-muted); }
+.cart-ho-msl { display: inline-flex; align-items: center; gap: var(--space-1); min-height: 44px; }
+.cart-ho-ms { width: 6.5em; min-height: 44px; padding: 0 var(--space-2); border: 1px solid var(--border);
+  border-radius: var(--radius-small); background: var(--bg-input); color: var(--text); font: inherit; }
 .cart-go { min-width: 96px; font-weight: 700; letter-spacing: .08em; }
 .cart-pl { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-1); }
 .cart-pl-row { display: flex; align-items: stretch; gap: var(--space-1); border: 1px solid var(--border);

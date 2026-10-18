@@ -83,6 +83,17 @@ class ArraySource:
         return self.pcm[pos:pos + n]
 
 
+# A/B handover (0.1.7): what becomes of the item still playing on the OTHER A/B player when the
+# next one is launched. "keep" (default) = it goes on playing, the operator stops it (fader start on
+# fader close, mute, manual stop); "cut" = de-clicked cut now; "fade" = faded over ab_handover_ms.
+AB_HANDOVER_MODES = ("keep", "cut", "fade")
+AB_HANDOVER_DEFAULT = "keep"
+AB_HANDOVER_MS_DEFAULT = 1000
+AB_HANDOVER_MS_MAX = 30000
+# Fields of the playlist that are SETTINGS (not items): set by /pl/options, carried by a save.
+PL_OPTION_FIELDS = ("ab", "ab_players", "auto", "loop", "ab_handover", "ab_handover_ms")
+
+
 # ─── Document ────────────────────────────────────────────────────────────────────────────────
 def default_doc():
     return {
@@ -91,7 +102,8 @@ def default_doc():
         "grid": {"cols": 4, "rows": 3},
         "page": "p1",
         "pages": [{"id": "p1", "name": "", "keys": []}],
-        "playlist": {"items": [], "ab": True, "ab_players": [1, 2], "auto": False, "loop": False},
+        "playlist": {"items": [], "ab": True, "ab_players": [1, 2], "auto": False, "loop": False,
+                     "ab_handover": AB_HANDOVER_DEFAULT, "ab_handover_ms": AB_HANDOVER_MS_DEFAULT},
         "settings": {"target_lufs": -23.0, "normalize": True, "max_gain_db": 12.0,
                      "peak_ceiling_db": -1.0, "alert_s": 10},
         "defaults": dict(DEFAULT_FIELDS),
@@ -288,7 +300,11 @@ def normalize_doc(doc, n_players):
         abp = [1, 2 if n_players >= 2 else 1]
     d["playlist"] = {"items": items, "ab": bool(pl.get("ab", True)) and n_players >= 2,
                      "ab_players": abp, "auto": bool(pl.get("auto", False)),
-                     "loop": bool(pl.get("loop", False))}
+                     "loop": bool(pl.get("loop", False)),
+                     "ab_handover": (pl.get("ab_handover") if pl.get("ab_handover") in AB_HANDOVER_MODES
+                                     else AB_HANDOVER_DEFAULT),
+                     "ab_handover_ms": _num(pl.get("ab_handover_ms", AB_HANDOVER_MS_DEFAULT), 0,
+                                            AB_HANDOVER_MS_MAX, AB_HANDOVER_MS_DEFAULT, int)}
     s = src.get("settings") if isinstance(src.get("settings"), dict) else {}
     d["settings"] = {
         "target_lufs": round(_num(s.get("target_lufs", -23.0), -40.0, -5.0, -23.0), 1),
@@ -707,9 +723,10 @@ class CartEngine:
                         target = p
                         break
             if target is None:
-                # both A and B busy (one on air, the other fading out): cue when it frees up
+                # both A and B busy (one on air, the other fading out, or still playing in "keep"
+                # handover): cue on the one that is NOT on air, when it frees up
                 for p in ab:
-                    if p.state == "fading":
+                    if p.state == "fading" or (p.item or {}).get("id") != self.pl_on_air:
                         p.pending_cue = self.pl_ready
                 return
             if c is not None:
@@ -720,7 +737,8 @@ class CartEngine:
                 target.pending_cue = self.pl_ready
 
     def pl_go(self, only=None):
-        """GO: the ready item goes on air; what was on air fades with its own fade.
+        """GO: the ready item goes on air. What was on air: in A/B, the playlist's `ab_handover`
+        (keep playing — default —, cut, or fade over ab_handover_ms, 0.1.7); outside A/B, its own fade.
         `only` (2026-10-18) : lancer CE lecteur et l'élément qu'il tient prêt — le fader start d'un lecteur qui tient
         « La Femme » ne doit pas lancer l'élément tenu par l'autre lecteur A/B."""
         with self.lock:
@@ -752,6 +770,14 @@ class CartEngine:
                             if not p.busy():
                                 target = p
                                 break
+                    if target is None:
+                        # Both A/B players busy (the previous item left playing in "keep", or still
+                        # fading): GO takes the one that is NOT on air — fading first — and its sound
+                        # goes on as a tail faded with its own fade, the player itself free at once.
+                        cands = [p for p in ab if (p.item or {}).get("id") != self.pl_on_air] or list(ab)
+                        cands.sort(key=lambda p: p.state != "fading")
+                        target = cands[0]
+                        self._free_to_tail(target, self._fade_for(target.item, target.origin))
             else:
                 for p in self.players:
                     if not p.busy():
@@ -764,7 +790,7 @@ class CartEngine:
                 self._load(target, items[self._item_index(self.pl_ready)], "playlist", "cued")
             for p in on_air_players:
                 if p is not target:
-                    self._fade_out(p, self._fade_for(p.item, p.origin))
+                    self._handover(p, bool(ab))
             self._start(target, 0)
             self.pl_on_air = target.item["id"]
             self.pl_ready = self._following(self.pl_on_air)
@@ -780,6 +806,34 @@ class CartEngine:
                 if not other.busy():
                     self._apply_pending_cue(other)
             return {"player": target.n, "item": self.pl_on_air, "ready": self.pl_ready}
+
+    def _handover(self, p, ab):
+        """What becomes of `p`, on air, when another player is launched by GO. Outside A/B: its own
+        fade, as always. In A/B: the playlist's `ab_handover` (0.1.7)."""
+        pl = self.doc["playlist"]
+        mode = pl.get("ab_handover", AB_HANDOVER_DEFAULT) if ab else None
+        if mode == "keep":
+            return
+        if mode == "cut":
+            self._fade_out(p, 0)
+        elif mode == "fade":
+            self._fade_out(p, pl.get("ab_handover_ms", AB_HANDOVER_MS_DEFAULT))
+        else:
+            self._fade_out(p, self._fade_for(p.item, p.origin))
+
+    def _free_to_tail(self, p, fade_ms):
+        """Free `p` NOW for another item: what it plays goes on as a tail faded over fade_ms (a fade
+        already under way keeps its remaining time; paused or cued sounds just go)."""
+        if p.state in ("playing", "fading") and p.source is not None:
+            g = p.env * p.env
+            if p.env_step < 0:
+                n = max(1.0, p.env / -p.env_step)
+            else:
+                n = max(float(self._declick), self.sr * max(0, int(fade_ms)) / 1000.0)
+            p.tails.append({"src": p.source, "pos": p.pos, "gain": p.gain, "env": g, "step": g / n})
+        self._event("released", player=p.n, reason="reclaimed", key=(p.item or {}).get("id"))
+        p.pending_cue = None
+        p.reset()
 
     def pl_step(self, delta):
         """Move the READY pointer (next / previous) without touching what is on air."""
@@ -926,8 +980,11 @@ class CartEngine:
                         self._apply_pending_cue(p)
                 return
         was_playlist = p.origin == "playlist"
+        # An item left playing by the "keep" A/B handover (0.1.7) is no longer on air: its end must
+        # not chain a GO while the item on air still plays. (pl_on_air None = list just recalled.)
+        was_on_air = self.pl_on_air is None or item.get("id") == self.pl_on_air
         self._release(p, "end")
-        if was_playlist and self.doc["mode"] == "playlist" and self.doc["playlist"]["auto"]:
+        if was_playlist and was_on_air and self.doc["mode"] == "playlist" and self.doc["playlist"]["auto"]:
             try:
                 self.pl_go()
             except EngineError:
@@ -1278,7 +1335,7 @@ class CartEngine:
     def pl_options(self, body):
         with self.lock:
             d = copy.deepcopy(self.doc)
-            for k in ("ab", "auto", "loop", "ab_players"):
+            for k in PL_OPTION_FIELDS:
                 if k in (body or {}):
                     d["playlist"][k] = body[k]
             return copy.deepcopy(self._commit(d))
@@ -1345,7 +1402,7 @@ class CartEngine:
                 summary = {"pages": len(d["pages"]), "keys": len(medias)}
             elif kind == "playlist":
                 pl = d["playlist"]
-                payload = {f: pl[f] for f in ("items", "ab", "ab_players", "auto", "loop")}
+                payload = {f: pl[f] for f in ("items",) + PL_OPTION_FIELDS}
                 medias = [it["media"] for it in pl["items"]]
                 summary = {"items": len(medias)}
             elif kind == "page":
@@ -1493,7 +1550,7 @@ class CartEngine:
                     items.append(it)
                 pl = d["playlist"]
                 pl["items"] = items
-                for f in ("ab", "ab_players", "auto", "loop"):
+                for f in PL_OPTION_FIELDS:
                     if f in payload:
                         pl[f] = payload[f]
                 # The new list starts at its top: a "ready" id of the old list means nothing here.

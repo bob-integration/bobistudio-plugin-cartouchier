@@ -126,12 +126,16 @@ défaut devient héritée, une valeur différente reste personnalisée.
 En mode **Playlist**, la liste est numérotée. L'élément à l'antenne porte **ANTENNE**, l'élément
 suivant porte **PRÊT**.
 
-- **GO** met à l'antenne l'élément prêt et fait disparaître ce qui était à l'antenne, avec son
-  propre fondu.
+- **GO** met à l'antenne l'élément prêt. Hors A/B, ce qui était à l'antenne disparaît avec son
+  propre fondu ; en A/B, c'est le réglage ci-dessous qui décide.
 - ◀ **Précédent** / ▶ **Suivant** déplacent l'élément prêt sans toucher à l'antenne.
 - Toucher une ligne la rend prête.
 - **A/B** : deux lecteurs alternent. A joue, B tient l'élément suivant chargé ; au GO, ils échangent.
   Il faut au moins deux lecteurs.
+  **Au lancement, l'autre lecteur** : **Laisser jouer** (par défaut — l'élément précédent continue
+  jusqu'à ce que vous l'arrêtiez : fermeture du fader avec le fader start, mute, ou arrêt), **Couper**
+  (aussitôt, sans clic) ou **Fondu** (durée réglable en ms). Si les deux lecteurs jouent encore au GO
+  suivant, le GO prend celui qui n'est pas à l'antenne : son son s'efface avec son propre fondu.
 - **Enchaînement auto** : les éléments se suivent seuls.
 - **Boucler la liste** : après le dernier, on repart au premier.
 
@@ -378,11 +382,12 @@ Actions :
 Les listes de touches, de pages, d'éléments et de sauvegardes sont vivantes.
 
 États lisibles : lecteurs en cours ; titre et temps restant de ce qui joue ; mode ; page affichée ;
-A/B ; élément à l'antenne (numéro et titre) et élément prêt ; état, temps restant et titre des
+A/B et le sort de l'autre lecteur au lancement (et la durée du fondu) ; élément à l'antenne (numéro et titre) et élément prêt ; état, temps restant et titre des
 lecteurs 1 et 2 ; état et titre de la pré-écoute.
 
-Dans l'arbre de paramètres : les niveaux (normalisation, cible, gain maximal, seuil d'alerte) et les
-défauts des touches. Les surfaces matérielles et Ember+ passent par ces actions et ces états, comme
+Dans l'arbre de paramètres : les niveaux (normalisation, cible, gain maximal, seuil d'alerte), les
+défauts des touches et, pour la playlist A/B, le sort de l'autre lecteur au lancement et la durée
+de son fondu. Les surfaces matérielles et Ember+ passent par ces actions et ces états, comme
 pour tout plugin.
 
 ## Pour les intégrateurs

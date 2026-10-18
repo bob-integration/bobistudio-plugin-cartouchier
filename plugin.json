@@ -6,7 +6,7 @@
   "image": "media",
   "media_volume": true,
   "state_volume": true,
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "Cartouchier : touches sonores en grille à pages ou en playlist A/B, sur N lecteurs stéréo (un flux MXL audio chacun). Boucle, enchaînement, exclusivité, fondu d'arrêt, deuxième appui réglable, normalisation EBU R128 au chargement, décompte, forme d'onde, intro / fin. Publie l'état de chaque flux (GET /flows) pour la console.",
   "badge": {
     "label": "Cart",
@@ -310,6 +310,31 @@
             "max": 8,
             "step": 1,
             "default": 0
+          }
+        }
+      },
+      {
+        "label": "Playlist A/B",
+        "endpoint": "/pl/options",
+        "path_prefix": "playlist",
+        "fields": {
+          "ab_handover": {
+            "label": "Au lancement du suivant, l'élément de l'autre lecteur (keep = laisser jouer, cut = couper, fade = fondu)",
+            "type": "enum",
+            "options": [
+              "keep",
+              "cut",
+              "fade"
+            ],
+            "default": "keep"
+          },
+          "ab_handover_ms": {
+            "label": "Durée du fondu de passage A/B (ms)",
+            "type": "duration",
+            "min": 0,
+            "max": 30000,
+            "step": 100,
+            "default": 1000
           }
         }
       }
@@ -667,6 +692,20 @@
       "endpoint": "/state",
       "path": "playlist.ab",
       "type": "bool"
+    },
+    {
+      "id": "ab_handover",
+      "label": "Playlist A/B : sort de l'élément de l'autre lecteur au lancement (keep / cut / fade)",
+      "endpoint": "/state",
+      "path": "playlist.ab_handover",
+      "type": "text"
+    },
+    {
+      "id": "ab_handover_ms",
+      "label": "Playlist A/B : durée du fondu de passage (ms)",
+      "endpoint": "/state",
+      "path": "playlist.ab_handover_ms",
+      "type": "number"
     },
     {
       "id": "on_air_index",
