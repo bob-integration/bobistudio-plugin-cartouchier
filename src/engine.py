@@ -619,7 +619,7 @@ class CartEngine:
             p = self._player(n)
             if p.state in ("cued", "paused"):
                 if p.origin == "playlist" and p.state == "cued":
-                    return self.pl_go()
+                    return self.pl_go(only=p)          # CE lecteur et ce qu'il tient, jamais l'autre (2026-10-18)
                 self._start(p)
                 return {"player": p.n, "action": "start"}
             return {"player": p.n, "action": "none", "state": p.state}
@@ -719,20 +719,26 @@ class CartEngine:
             except EngineError:
                 target.pending_cue = self.pl_ready
 
-    def pl_go(self):
-        """GO: the ready item goes on air; what was on air fades with its own fade."""
+    def pl_go(self, only=None):
+        """GO: the ready item goes on air; what was on air fades with its own fade.
+        `only` (2026-10-18) : lancer CE lecteur et l'élément qu'il tient prêt — le fader start d'un lecteur qui tient
+        « La Femme » ne doit pas lancer l'élément tenu par l'autre lecteur A/B."""
         with self.lock:
             items = self._items()
             if not items:
                 raise EngineError("playlist_empty", 409)
             self._reset_ready()
+            if only is not None and only.state == "cued" and only.item:
+                self.pl_ready = only.item["id"]
             if self.pl_ready is None:
                 raise EngineError("playlist_end", 409)
             ab = self._ab()
             on_air_players = [p for p in self.players
                               if p.origin == "playlist" and p.state in ("playing", "paused")]
             target = None
-            if ab:
+            if only is not None and only.state == "cued":
+                target = only
+            elif ab:
                 c = self._cued_playlist_player()
                 if c is not None and c.item["id"] == self.pl_ready:
                     target = c
@@ -767,6 +773,9 @@ class CartEngine:
             if ab and self.pl_ready is not None:
                 # B holds the following item ready: now if it is free, when its fade ends if not.
                 other = ab[1] if target is ab[0] else ab[0]
+                # l'autre lecteur tenait un élément qui n'est plus le suivant (lancé hors ordre) : il reprend le suivant
+                if other.state == "cued" and other.item and other.item["id"] != self.pl_ready:
+                    self._cut(other)
                 other.pending_cue = self.pl_ready
                 if not other.busy():
                     self._apply_pending_cue(other)
