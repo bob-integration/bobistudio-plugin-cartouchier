@@ -1,7 +1,10 @@
 {
-  "version": "0.1.4",
-  "date": "2026-10-17",
+  "version": "0.1.5",
+  "date": "2026-10-18",
   "changes": {
+    "Fader start : un élément chargé reste chargé (0.1.5)": [
+      "Action « Lecteur : arrêter » : option « Seulement si la lecture a eu lieu » (if_played). Le fader start de la console l'utilise à la fermeture du fader : charger un élément fader ouvert puis fermer le fader pour le lancer ne le décharge plus."
+    ],
     "Écoute et éditeur de clip (0.1.4)": [
       "★ Écoute dans le navigateur (bouton 🎧 de la barre), même mécanisme que la console audio : flux déclaré `control.streams` GET /listen.pcm (L16 stéréo 48 kHz, relayé tel quel par l'orchestrateur), AudioWorklet. Une seule source à la fois : un LECTEUR au choix (ce qui part vers la console), ou la PRÉ-ÉCOUTE.",
       "★ Pré-écoute hors antenne : un lecteur propre au cartouchier, rendu dans le fil audio existant, qui n'écrit sur AUCUN flux MXL. Depuis le 🎧 d'une touche en Édition, l'éditeur de touche, une ligne de playlist ou l'éditeur de clip ; elle s'arrête quand le dernier navigateur qui l'écoute s'en va. Macros : « Pré-écouter une touche », « Arrêter la pré-écoute » ; état `preview` dans /state. Pas d'écoute sur la page publique (le relais ne sert aucun flux).",

@@ -6,7 +6,7 @@
   "image": "media",
   "media_volume": true,
   "state_volume": true,
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Cartouchier : touches sonores en grille à pages ou en playlist A/B, sur N lecteurs stéréo (un flux MXL audio chacun). Boucle, enchaînement, exclusivité, fondu d'arrêt, deuxième appui réglable, normalisation EBU R128 au chargement, décompte, forme d'onde, intro / fin. Publie l'état de chaque flux (GET /flows) pour la console.",
   "badge": {
     "label": "Cart",
@@ -512,6 +512,12 @@
           "type": "number",
           "default": 1,
           "options_endpoint": "/players"
+        },
+        {
+          "key": "if_played",
+          "label": "Seulement si la lecture a eu lieu (un élément chargé reste chargé)",
+          "type": "boolean",
+          "default": false
         }
       ]
     },

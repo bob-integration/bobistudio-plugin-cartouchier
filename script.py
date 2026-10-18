@@ -588,7 +588,7 @@ def _post(path, b):
     if path == "/player/pause":
         return e.player_pause(b.get("player"))
     if path == "/player/stop":
-        return e.player_stop(b.get("player"), cut=bool(b.get("cut")))
+        return e.player_stop(b.get("player"), cut=bool(b.get("cut")), if_played=bool(b.get("if_played")))
     if path == "/key":
         r = e.set_key(b)
         library.want(referenced_medias())

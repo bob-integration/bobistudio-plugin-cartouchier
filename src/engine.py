@@ -635,11 +635,15 @@ class CartEngine:
                 return {"player": p.n, "action": "resume"}
             return {"player": p.n, "action": "none", "state": p.state}
 
-    def player_stop(self, n, cut=False):
+    def player_stop(self, n, cut=False, if_played=False):
+        """`if_played` (fader start, 2026-10-18) : un élément chargé mais pas encore lu reste chargé — fermer le fader pour
+        le relancer ne doit pas le décharger ; l'arrêt ne vaut que si la lecture a eu lieu."""
         with self.lock:
             p = self._player(n)
             if not p.busy():
                 return {"player": p.n, "action": "none"}
+            if if_played and p.state == "cued":
+                return {"player": p.n, "action": "none", "reason": "not_played"}
             if cut or p.state in ("paused", "cued"):
                 was_cued = p.state == "cued"
                 self._cut(p)
