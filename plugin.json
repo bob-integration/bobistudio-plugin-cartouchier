@@ -51,7 +51,8 @@
     "control_html": "control.html",
     "control_js": "control.js",
     "control_css": "control.css",
-    "public_page": true
+    "public_page": true,
+    "public_tabs": "/tabs"
   },
   "resources": {
     "cores": 1,
