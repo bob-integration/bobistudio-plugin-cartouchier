@@ -32,6 +32,8 @@ sa playlist, en direct. Par défaut elle est en lecture seule ; si le lien a ét
 « Autoriser à jouer cet onglet », on peut y lancer et arrêter les touches, faire GO et lancer ou
 arrêter les lecteurs de cet onglet — rien d'autre (ni édition, ni réglages). L'écoute n'y est pas
 disponible.
+Le lien ne laisse rien LIRE non plus des autres onglets : le cartouchier ne lui renvoie que cet
+onglet (zones, lecteurs, touches, playlist, états) — aucun titre, fichier ni identifiant d'ailleurs.
 
 ## Onglets et zones
 

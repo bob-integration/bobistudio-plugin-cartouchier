@@ -30,6 +30,8 @@ On a public link the page shows **one tab** (the link's): its players, keys and 
 default it is read only; when the link was created with "Allow playing this tab", its keys can be
 fired and stopped, GO pressed and its players played or stopped — nothing else (no editing, no
 settings). Listening is not available there.
+Nor can the link READ anything of the other tabs: the cart answers it with that tab only (zones,
+players, keys, playlist, states) — no title, file or id from elsewhere.
 
 ## Tabs and zones
 

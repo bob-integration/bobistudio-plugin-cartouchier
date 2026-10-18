@@ -539,7 +539,9 @@ def _text_name(v):
     return str(v or "").strip()[:80]
 
 
-def _get(path, qs):
+def _get(path, qs, tab=None):
+    if tab is not None:
+        return scoped_get(path, qs, tab)
     if path == "/state":
         return 200, state_view()
     if path == "/doc":
@@ -719,6 +721,160 @@ def public_scope_refusal(path, b, raw):
         return None if zid and engine.tab_of_zone(zid) == tab else "out_of_scope"
 
 
+# ─── Public tab: what a SCOPED link may READ (0.1.10) ─────────────────────────────────────────
+# Through a link scoped to a tab, the read endpoints answer for THAT TAB ONLY: its zones, their
+# players, pages, keys, playlist items and states. Nothing about another tab, zone, player or medium
+# (title, file name, id) goes out — the page only SHOWED one tab, but /doc and /state used to carry
+# all of them to anyone holding the link. Filtered HERE because only the cart knows what belongs to
+# a tab. The relay always sets the header for a public link (built from scratch, a visitor's own is
+# never forwarded); a public link without a tab (`{{}}`) reads as before, and so does a request
+# without the header (the console's own interface). An unreadable header reads as a tab that does
+# not exist: nothing at all, never everything.
+_NO_TAB = "\0"
+
+
+def scoped_tab(raw):
+    """None = read as before; else the id of the tab the request may read (_NO_TAB if unreadable)."""
+    if raw is None:
+        return None
+    try:
+        sc = json.loads(raw)
+    except ValueError:
+        return _NO_TAB
+    if not isinstance(sc, dict):
+        return _NO_TAB
+    tab = sc.get("tab")
+    if tab is None:
+        return None
+    return tab if isinstance(tab, str) and tab else _NO_TAB
+
+
+def scoped_doc(doc, tab):
+    """The document reduced to the tab `tab`: its zones in full, the global settings, nothing else."""
+    t = next((x for x in doc["tabs"] if x["id"] == tab), None)
+    zids = set(t["zones"]) if t else set()
+    return json.loads(json.dumps({{
+        "version": doc.get("version"), "tab": t["id"] if t else "", "tabs": [t] if t else [],
+        "zones": [z for z in doc["zones"] if z["id"] in zids],
+        "settings": doc["settings"], "defaults": doc["defaults"]}}))
+
+
+def _scope_zones(tab):
+    t = next((x for x in engine.doc["tabs"] if x["id"] == tab), None)
+    return t, (list(t["zones"]) if t else [])
+
+
+def scoped_state(tab):
+    """/state for a scoped link, cut to the tab. The top-level fields that describe the DEFAULT zone
+    (which may sit in another tab) are re-read from the tab's own zones; counters, events, pre-listen
+    and listening (the whole cart's) are left out."""
+    full = state_view()
+    t, zl = _scope_zones(tab)
+    zids = set(zl)
+    zones = [z for z in engine.doc["zones"] if z["id"] in zids]
+    players = []
+    for p in full["players"]:
+        if p.get("zone") not in zids:
+            continue
+        if p.get("from_zone") and p["from_zone"] not in zids:
+            p = dict(p, key=None, title="", from_zone=None)   # moved by the layout while playing another tab's sound
+        players.append(p)
+    gz = next((z for z in zones if z["mode"] == "grid"), None)
+    pz = next((z for z in zones if z["mode"] == "playlist"), None)
+    zv = [z for z in full["zones"] if z["id"] in zids]
+    cur = next((p for p in players if p["state"] in ("playing", "fading")), None)
+    out = {{"type": full["type"], "version": full["version"], "hostname": full["hostname"],
+           "n_players": full["n_players"], "flows": [p["flow"] for p in players if p.get("flow")],
+           "doc_rev": full["doc_rev"], "mode": zones[0]["mode"] if zones else "grid",
+           "settings": full["settings"], "defaults": full["defaults"],
+           "tab": t["id"] if t else "", "tab_index": 1, "tabs": [x for x in full["tabs"] if x["id"] == tab],
+           "zones": zv, "players": players,
+           "playing_count": sum(1 for p in players if p["state"] in ("playing", "fading")),
+           "current_title": cur["title"] if cur else "", "current_remaining_ms": cur["remaining_ms"] if cur else 0,
+           "playlist": None, "on_air_title": "", "page": None, "page_index": None, "page_name": "",
+           "pages_count": 0, "grid": None, "page_defaults": {{}}, "key_media": {{}}, "item_media": {{}},
+           "counters": {{}}, "events": [], "preview": None, "listen": None, "audio": full.get("audio")}}
+    if gz:
+        ids = [p["id"] for p in gz["pages"]]
+        pi = ids.index(gz["page"]) if gz["page"] in ids else 0
+        out.update(page=gz["page"], page_index=pi + 1, page_name=gz["pages"][pi]["name"], pages_count=len(ids),
+                   grid=gz["grid"], page_defaults=gz["pages"][pi].get("defaults") or {{}})
+    if pz:
+        plv = next(z["playlist"] for z in zv if z["id"] == pz["id"])
+        out["playlist"] = plv
+        out["on_air_title"] = next((it["title"] for it in pz["playlist"]["items"] if it["id"] == plv["on_air"]), "")
+    shown = [next(p for p in z["pages"] if p["id"] == z["page"]) for z in zones]
+    out["key_media"] = {{k["id"]: full["key_media"].get(k["id"]) for pg in shown for k in pg["keys"]}}
+    out["item_media"] = {{it["id"]: full["item_media"].get(it["id"]) for z in zones for it in z["playlist"]["items"]}}
+    return out
+
+
+def scoped_get(path, qs, tab):
+    """GET through a link scoped to `tab`: every read endpoint, cut to the tab (see above)."""
+    if path == "/state":
+        return 200, scoped_state(tab)
+    if path == "/doc":
+        return 200, scoped_doc(engine.doc, tab)
+    t, zl = _scope_zones(tab)
+    zids = set(zl)
+    unknown = (404, {{"error": "unknown"}})            # outside the tab = not there (no oracle on what exists)
+    with engine.lock:
+        players = [n for n in range(1, N_PLAYERS + 1) if engine._player_zone.get(n) in zids]
+        keys = {{k for k, z in engine._key_zone.items() if z in zids}}
+    zones = [z for z in engine.doc["zones"] if z["id"] in zids]
+    zf = _q(qs, "zone")
+    if path == "/flows":
+        keep = {{FLOWS[n - 1] for n in players if n - 1 < len(FLOWS)}}
+        return 200, {{f: v for f, v in engine.flows_view(FLOWS).items() if f in keep}}
+    if path == "/keys":
+        if zf and zf not in zids:
+            return 200, {{"items": []}}
+        return 200, {{"items": [o for o in engine.key_options(zf) if o["value"] in keys]}}
+    if path == "/pages":
+        zs = [z for z in zones if not zf or z["id"] == zf]
+        many = len(zs) > 1
+        return 200, {{"items": [{{"value": p["id"], "label": ("%s · " % engine.zone_label(z, zl.index(z["id"])) if many else "")
+                                + "%d · %s" % (i + 1, p["name"] or p["id"])}}
+                               for z in zs for i, p in enumerate(z["pages"])]}}
+    if path == "/zones":
+        tn = (t or {{}}).get("name") or "1"
+        return 200, {{"items": [{{"value": z["id"], "label": "%s · %s (%s)" % (
+            tn, engine.zone_label(z, zl.index(z["id"])), E.zone_kind(z))}} for z in zones]}}
+    if path == "/tabs":
+        return 200, {{"items": [{{"value": t["id"], "label": "1 · %s" % (t["name"] or t["id"])}}] if t else []}}
+    if path == "/players":
+        return 200, {{"items": [{{"value": n, "label": "%d · %s" % (n, FLOWS[n - 1])}} for n in players]}}
+    if path == "/items":
+        if zf:
+            z = next((x for x in zones if x["id"] == zf), None)
+            if z is None:
+                return unknown
+        else:
+            z = next((x for x in zones if x["mode"] == "playlist"), None)
+            if z is None:
+                return 200, {{"items": []}}
+        return 200, {{"items": [{{"value": i, "label": "%d · %s" % (i + 1, it["title"] or it["media"]["file"])}}
+                               for i, it in enumerate(z["playlist"]["items"])]}}
+    if path == "/waveform":
+        k, i, p = _q(qs, "key"), _q(qs, "item"), _q(qs, "player")
+        if k:
+            allowed = k in keys
+        elif i:
+            allowed = (engine.find_item(i)[0] or {{}}).get("id") in zids
+        elif p:
+            try:
+                allowed = int(p) in players
+            except ValueError:
+                allowed = False
+        else:
+            allowed = True                              # nothing named: the 400 of _waveform
+        return _waveform(qs) if allowed else unknown
+    # the clip editor's source windows, montage jobs, captures for a save: not part of a public tab
+    if path in ("/wave", "/montage/job", "/capture"):
+        return 403, {{"ok": False, "error": "out_of_scope"}}
+    return 404, {{"error": "unknown"}}
+
+
 class Control(BaseHTTPRequestHandler):
     def _stream(self, qs):
         """GET /listen.pcm — declared in `control.streams`, relayed as is by the orchestrator. HTTP/1.0,
@@ -751,7 +907,7 @@ class Control(BaseHTTPRequestHandler):
         if u.path == "/listen.pcm":
             return self._stream(parse_qs(u.query))
         try:
-            code, obj = _get(u.path, parse_qs(u.query))
+            code, obj = _get(u.path, parse_qs(u.query), scoped_tab(self.headers.get(SCOPE_HEADER)))
         except Exception as ex:
             log("GET %s: %s" % (u.path, traceback.format_exc()), "error")
             code, obj = 500, {{"error": "%s: %s" % (type(ex).__name__, ex)}}

@@ -388,7 +388,7 @@
     });
     // keys of the grid: remaining on the key itself
     EL.querySelectorAll('.cart-key[data-player]').forEach(b => {
-      const p = S.players[+b.dataset.player - 1];
+      const p = S.players.find(x => x.player === +b.dataset.player);   // a scoped public /state lists only its tab's players
       if (!p) return;
       const v = live(p, now);
       const r = b.querySelector('.cart-key-rem');

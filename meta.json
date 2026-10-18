@@ -1,7 +1,10 @@
 {
-  "version": "0.1.9",
+  "version": "0.1.10",
   "date": "2026-10-18",
   "changes": {
+    "Lien public d'un onglet (0.1.10)": [
+      "★ Un lien public limité à un onglet ne laisse plus rien lire des autres : /doc, /state et les autres lectures ne renvoient que cet onglet — ses zones, leurs lecteurs, pages, touches, éléments de playlist et états. Aucun titre, nom de fichier ni identifiant d'un autre onglet, d'une autre zone ou d'un autre lecteur ne sort. L'éditeur de clip, les montages et les captures ne sont pas lisibles par ce lien. Un lien sans onglet lit comme avant."
+    ],
     "Finitions (0.1.9)": [
       "Le menu de pré-écoute suit le thème (il restait blanc sur le thème sombre).",
       "Un lecteur qui n'appartient à aucune zone est signalé « sans zone » en orange ; au survol, la marche à suivre (Disposition de l'onglet…, en Édition)."
