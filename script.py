@@ -44,7 +44,12 @@ PLUGIN_VERSION = "{plugin_version}"
 
 SR = 48000
 BLOCK = SR // 1000                 # 48 samples = 1 ms, the bus's audio granularity
-LATE_REANCHOR = 200                # more than 200 ms behind (suspension, CPU starvation): re-anchor
+LATE_REANCHOR = 200                # more than 200 blocks off the TAI grid (suspension, clock step): re-anchor
+LEAD = 3 * BLOCK                   # samples written AHEAD of the TAI instant. With SCHED_FIFO and no request in flight
+                                   # the worst write lag is 91 samples; under 20 requests/s a request thread holding the
+                                   # GIL gets preempted and the audio thread waits for it: 255 once in 3 min (measured
+                                   # 2026-10-19). 3 ms ahead keeps that under a console's 144-sample read margin; it
+                                   # delays a player's reaction to Play by 3 ms, never the audio path.
 
 
 def _int(v, lo, hi, default):
@@ -55,6 +60,7 @@ def _int(v, lo, hi, default):
 
 
 N_PLAYERS = _int(CONFIG.get("players"), 1, 8, 2)
+RT_PRIORITY = _int(CONFIG.get("rt_priority"), 0, 20, 10)   # SCHED_FIFO of the audio thread, 0 = normal
 # Flow names: the SAME rule as `wiring.produces` in plugin.json ("{{hostname}}_player_{{i1}}").
 FLOWS = ["%s_player_%d" % (HOSTNAME, i + 1) for i in range(N_PLAYERS)]
 MEDIA_ROOT = CONFIG.get("media_root") or "/mnt/media"
@@ -79,6 +85,7 @@ metrics = {{
     "write_errors": 0, "writer_reopens": 0, "players": N_PLAYERS, "flows": FLOWS,
     "playing": 0, "plugin_version": PLUGIN_VERSION, "own_latency_ms": 0.0, "source": "cart",
     "media_ready": 0, "media_pending": 0, "media_missing": 0, "last_error": None,
+    "write_late_max_ms": 0.0, "rt": None,
 }}
 metrics_lock = threading.Lock()
 
@@ -184,21 +191,38 @@ def state_view():
     }}
     with metrics_lock:
         out["audio"] = {{k: metrics[k] for k in ("blocks_per_s", "render_ms_max", "late_blocks",
-                                                "reanchors", "write_errors", "last_error")}}
+                                                "reanchors", "write_errors", "last_error", "write_late_max_ms", "rt")}}
     out["cache"] = dict(library.stats, dir=library.cache)
     return out
 
 
 # ─── Audio thread ────────────────────────────────────────────────────────────────────────────
+def _apply_rt():
+    """SCHED_FIFO for the CALLING thread (Linux: pid 0 = this thread). The container shares its core with
+    unpinned processes: under CFS the audio thread waited up to 6 ms to run (measured 2026-10-19, still
+    331-sample spikes with the GIL at 0.5 ms and no request in flight). Needs SYS_NICE (manifest
+    resources.cap_add); a refusal is published in metrics["rt"], never fatal."""
+    rt = {{"requested": RT_PRIORITY, "ok": False, "error": None}}
+    if RT_PRIORITY:
+        try:
+            os.sched_setscheduler(0, os.SCHED_FIFO, os.sched_param(RT_PRIORITY))
+            rt["ok"] = True
+        except OSError as e:
+            rt["error"] = "rt_not_permitted" if e.errno == 1 else "rt_failed"
+            log("audio thread: real-time scheduling refused (%s)" % e, "warning")
+    with metrics_lock:
+        metrics["rt"] = rt
+
+
 def audio_thread():
     import bobimxl
+    _apply_rt()
     inst = bobimxl.Instance(os.environ.get("MXL_DOMAIN") or "/dev/shm/mxl")
     writers = None
     next_idx = None
-    t0 = time.monotonic()
-    written = 0
     count = 0
     rmax = 0.0
+    lag_max = 0
     tick = time.monotonic()
     while True:
         try:
@@ -206,33 +230,31 @@ def audio_thread():
                 writers = [bobimxl.AudioWriter(inst, f, channels=2, sample_rate=SR, index_mode="tai")
                            for f in FLOWS]
                 next_idx = None
-                t0 = time.monotonic()
-                written = 0
-            due = int((time.monotonic() - t0) * 1000.0)
-            if due - written > LATE_REANCHOR:
+            # Paced on the TAI sample index itself, never on time.monotonic(): the index is TAI, and a
+            # monotonic pace drifts away from it (measured 2026-10-19 on 1176: 121 ms behind TAI after
+            # 10 h, ~4 ppm). A block [i, i+BLOCK) is due once its END is no later than now + LEAD.
+            now_idx = bobimxl.current_index(SR)
+            if next_idx is None:
+                next_idx = now_idx - BLOCK
+            late = now_idx - (next_idx + BLOCK)
+            if late > LATE_REANCHOR * BLOCK or late < -LATE_REANCHOR * BLOCK:
                 with metrics_lock:
                     metrics["reanchors"] += 1
-                    metrics["late_blocks"] += due - written
-                t0 = time.monotonic()
-                written = 0
-                next_idx = None
-                due = 0
-            if written < due:
+                    metrics["late_blocks"] += max(0, late // BLOCK)
+                log("audio thread: %+d samples off the TAI grid — re-anchored" % late, "warning")
+                next_idx = now_idx - BLOCK
+                late = 0
+            if next_idx + BLOCK <= now_idx + LEAD:
+                lag_max = max(lag_max, late)
                 r0 = time.perf_counter()
                 blocks = engine.render(BLOCK)
                 rmax = max(rmax, (time.perf_counter() - r0) * 1000.0)
                 listen_hub.push(blocks, engine.pfl_out)               # browsers only; no client = no cost
-                if next_idx is None:
-                    next_idx = writers[0].write(blocks[0])        # anchor on the TAI grid, once
-                    for w, b in zip(writers[1:], blocks[1:]):
-                        w.write(b, index=next_idx)
-                else:
-                    for w, b in zip(writers, blocks):
-                        w.write(b, index=next_idx)
+                for w, b in zip(writers, blocks):
+                    w.write(b, index=next_idx)
                 next_idx += BLOCK
-                written += 1
                 count += 1
-                if written < due:
+                if next_idx + BLOCK <= now_idx + LEAD:
                     continue                 # catching up: no sleep, one block per pass anyway
             now = time.monotonic()
             if now - tick >= 1.0:
@@ -241,9 +263,10 @@ def audio_thread():
                     metrics["fps"] = metrics["blocks_per_s"]
                     metrics["render_ms_max"] = round(rmax, 3)
                     metrics["own_latency_ms"] = round(rmax, 3)
+                    metrics["write_late_max_ms"] = round(max(0, lag_max) * 1000.0 / SR, 2)
                     metrics["playing"] = sum(1 for p in engine.players
                                              if p.state in ("playing", "fading"))
-                count, rmax, tick = 0, 0.0, now
+                count, rmax, lag_max, tick = 0, 0.0, 0, now
             time.sleep(0.0004)
         except Exception as e:
             # Never silent: a feeder that dies quietly is an output that goes off air unnoticed.
@@ -948,6 +971,10 @@ class Control(BaseHTTPRequestHandler):
 
 
 def main():
+    # The audio thread shares the GIL with the decoder, the waveform and the HTTP threads: at the default
+    # 5 ms switch interval it waited up to 6 ms for it (measured 2026-10-19: 302-sample spikes, enough to
+    # dry a console reading 144 samples behind). 0.5 ms, as in the audio console.
+    sys.setswitchinterval(0.0005)
     threading.Thread(target=library.worker, args=(keep_keys,), daemon=True, name="loader").start()
     threading.Thread(target=media_watch, daemon=True, name="media").start()
     threading.Thread(target=audio_thread, daemon=True, name="audio").start()

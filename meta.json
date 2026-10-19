@@ -1,7 +1,13 @@
 {
-  "version": "0.1.10",
-  "date": "2026-10-18",
+  "version": "0.1.11",
+  "date": "2026-10-19",
   "changes": {
+    "Sorties régulières (0.1.11)": [
+      "★ Les sorties des lecteurs suivent l'horloge TAI qui numérote les échantillons, et non plus l'horloge interne du conteneur. Elles dérivaient d'environ 4 millionièmes : 121 ms de retard mesurées après 10 h de marche.",
+      "★ Plus d'à-coups de 4 à 6 ms. Le fil audio passe en temps réel (comme celui de la console), il reprend le verrou Python en 0,5 ms au lieu de 5 ms, et il écrit 3 ms en avance. Pire retard mesuré : 302 échantillons avant, 60 après, sous charge. Une console qui lit le cartouchier avec la marge par défaut (144) ne passe plus à sec.",
+      "Le démarrage d'un lecteur s'entend 3 ms plus tard. Le chemin audio, lui, ne change pas.",
+      "Conteneur à recréer une fois (capacité temps réel). Sans elle, le cartouchier marche comme avant et le signale dans rt (/state et :8080). Nouveau relevé write_late_max_ms : le pire retard d'écriture d'un bloc sur la dernière seconde."
+    ],
     "Lien public d'un onglet (0.1.10)": [
       "★ Un lien public limité à un onglet ne laisse plus rien lire des autres : /doc, /state et les autres lectures ne renvoient que cet onglet — ses zones, leurs lecteurs, pages, touches, éléments de playlist et états. Aucun titre, nom de fichier ni identifiant d'un autre onglet, d'une autre zone ou d'un autre lecteur ne sort. L'éditeur de clip, les montages et les captures ne sont pas lisibles par ce lien. Un lien sans onglet lit comme avant."
     ],

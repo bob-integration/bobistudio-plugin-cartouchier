@@ -6,7 +6,7 @@
   "image": "media",
   "media_volume": true,
   "state_volume": true,
-  "version": "0.1.10",
+  "version": "0.1.11",
   "description": "Cartouchier : touches sonores en grille à pages ou en playlist A/B, sur N lecteurs stéréo (un flux MXL audio chacun). Boucle, enchaînement, exclusivité, fondu d'arrêt, deuxième appui réglable, normalisation EBU R128 au chargement, décompte, forme d'onde, intro / fin. Publie l'état de chaque flux (GET /flows) pour la console.",
   "badge": {
     "label": "Cart",
@@ -57,7 +57,13 @@
   "resources": {
     "cores": 1,
     "memory": 1024,
-    "pin": true
+    "pin": true,
+    "cap_add": [
+      "SYS_NICE"
+    ],
+    "ulimits": {
+      "rtprio": 20
+    }
   },
   "deploy_defaults": {
     "players": 2,
@@ -93,6 +99,15 @@
       "max": 7200,
       "default": 1200,
       "help": "Un média plus long est tronqué au décodage. Un cartouchier lit des sons courts : ce plafond évite qu'un film glissé par erreur sur une touche remplisse le disque."
+    },
+    {
+      "key": "rt_priority",
+      "type": "number",
+      "label": "Fil audio temps réel (priorité, 0 = normal)",
+      "default": 10,
+      "min": 0,
+      "max": 20,
+      "hidden": true
     },
     {
       "key": "log_level",
