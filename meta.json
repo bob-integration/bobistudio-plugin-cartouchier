@@ -1,7 +1,10 @@
 {
-  "version": "0.1.11",
-  "date": "2026-10-19",
+  "version": "0.1.12",
+  "date": "2026-10-30",
   "changes": {
+    "Mesure mémoire datée au manifeste (0.1.12)": [
+      "Ressources : la limite mémoire déclarée porte désormais sa MESURE datée (relevé du 2026-10-30, conteneur et configuration nommés) — garde générique tests/verif_resources_mesurees.py. La limite elle-même ne change pas ; rien à redéployer."
+    ],
     "Sorties régulières (0.1.11)": [
       "★ Les sorties des lecteurs suivent l'horloge TAI qui numérote les échantillons, et non plus l'horloge interne du conteneur. Elles dérivaient d'environ 4 millionièmes : 121 ms de retard mesurées après 10 h de marche.",
       "★ Plus d'à-coups de 4 à 6 ms. Le fil audio passe en temps réel (comme celui de la console), il reprend le verrou Python en 0,5 ms au lieu de 5 ms, et il écrit 3 ms en avance. Pire retard mesuré : 302 échantillons avant, 60 après, sous charge. Une console qui lit le cartouchier avec la marge par défaut (144) ne passe plus à sec.",

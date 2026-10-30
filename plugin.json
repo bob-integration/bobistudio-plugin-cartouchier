@@ -6,7 +6,7 @@
   "image": "media",
   "media_volume": true,
   "state_volume": true,
-  "version": "0.1.11",
+  "version": "0.1.12",
   "description": "Cartouchier : touches sonores en grille à pages ou en playlist A/B, sur N lecteurs stéréo (un flux MXL audio chacun). Boucle, enchaînement, exclusivité, fondu d'arrêt, deuxième appui réglable, normalisation EBU R128 au chargement, décompte, forme d'onde, intro / fin. Publie l'état de chaque flux (GET /flows) pour la console.",
   "badge": {
     "label": "Cart",
@@ -54,6 +54,7 @@
     "public_page": true,
     "public_tabs": "/tabs"
   },
+  "_resources_mesure": "MÉMOIRE (relevée le 2026-10-30, r620-2 #1176, 2 onglets, 1 zone, 1 lecteur, 7 cartouches en liste) : 60 à 62 Mio pour une limite déclarée de 1024 (6 %). Méthode : `memory.current` du cgroup, tel que l'orchestrateur le relève à chaque tour sur l'agent (:8081/stats → champ `mem_used`), lu en lecture seule par GET /api/containers : 21 relevés à 10 s d'écart entre 13:17 et 13:21. La part shmem (bus MXL mappé, ≈ 1/5 sur decklink_io) n'est PAS disponible par cette voie ; la limite effectivement posée au conteneur (memory.max) non plus — le rapport est donc pris sur le chiffre DÉCLARÉ. ⚠ CONFIGURATION LÉGÈRE : ce relevé dit que CETTE configuration tient, pas que 1024 Mio paie une configuration pleine ; la limite n'a été ni baissée ni montée (chantier de documentation, 2026-10-30). À REMESURER sur une configuration pleine, en lisant memory.stat (anon / shmem / pgscan_direct) du cgroup, avant de toucher au chiffre.",
   "resources": {
     "cores": 1,
     "memory": 1024,
