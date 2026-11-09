@@ -38,7 +38,10 @@ from urllib.parse import parse_qs, urlparse
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
-import bobimxl                       # noqa: E402
+try:
+    import bobimxl                   # pushed next to the script at deploy; absent only in offline harnesses
+except ImportError:
+    bobimxl = None
 
 CONFIG = {config}
 HOSTNAME = "{hostname}"
