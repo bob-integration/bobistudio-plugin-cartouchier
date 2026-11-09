@@ -1,7 +1,10 @@
 {
-  "version": "0.1.12",
-  "date": "2026-10-30",
+  "version": "0.1.13",
+  "date": "2026-11-09",
   "changes": {
+    "Taille des paquets audio (0.1.13)": [
+      "Les blocs audio écrits sur le bus suivent le réglage du cœur (Réglages → MXL) au lieu d'un 1 ms figé. Avec le réglage actuel (1 ms), rien ne change. Conteneur à redéployer pour en profiter."
+    ],
     "Mesure mémoire datée au manifeste (0.1.12)": [
       "Ressources : la limite mémoire déclarée porte désormais sa MESURE datée (relevé du 2026-10-30, conteneur et configuration nommés) — garde générique tests/verif_resources_mesurees.py. La limite elle-même ne change pas ; rien à redéployer."
     ],

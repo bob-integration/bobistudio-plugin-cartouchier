@@ -38,18 +38,22 @@ from urllib.parse import parse_qs, urlparse
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
+import bobimxl                       # noqa: E402
+
 CONFIG = {config}
 HOSTNAME = "{hostname}"
 PLUGIN_VERSION = "{plugin_version}"
 
 SR = 48000
-BLOCK = SR // 1000                 # 48 samples = 1 ms, the bus's audio granularity
+# Audio packet size on the bus: core setting (Réglages → MXL). An older orchestrator has no helper: 1 ms.
+BLOCK = bobimxl.audio_grain(CONFIG, SR) if hasattr(bobimxl, "audio_grain") else 48
 LATE_REANCHOR = 200                # more than 200 blocks off the TAI grid (suspension, clock step): re-anchor
 LEAD = 3 * BLOCK                   # samples written AHEAD of the TAI instant. With SCHED_FIFO and no request in flight
                                    # the worst write lag is 91 samples; under 20 requests/s a request thread holding the
                                    # GIL gets preempted and the audio thread waits for it: 255 once in 3 min (measured
-                                   # 2026-10-19). 3 ms ahead keeps that under a console's 144-sample read margin; it
-                                   # delays a player's reaction to Play by 3 ms, never the audio path.
+                                   # 2026-10-19). 3 blocks ahead (3 ms at the 1 ms grain) should stay under a console's read margin
+                                   # (a per-console setting, `read_margin_samples`); it delays a player's reaction to
+                                   # Play by that lead, never the audio path.
 
 
 def _int(v, lo, hi, default):
