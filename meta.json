@@ -1,7 +1,10 @@
 {
-  "version": "0.1.13",
+  "version": "0.1.14",
   "date": "2026-11-09",
   "changes": {
+    "Version minimale du cœur déclarée (0.1.14)": [
+      "Le manifeste déclare `requires.core_min` = 0.9.14 : l'orchestrateur refuse de l'installer sur un cœur plus ancien et le dit. Valeur = le cœur avec lequel la version précédente a été faite. Rien ne change dans le conteneur : rien à redéployer."
+    ],
     "Taille des paquets audio (0.1.13)": [
       "Les blocs audio écrits sur le bus suivent le réglage du cœur (Réglages → MXL) au lieu d'un 1 ms figé. Avec le réglage actuel (1 ms), rien ne change. Conteneur à redéployer pour en profiter."
     ],
